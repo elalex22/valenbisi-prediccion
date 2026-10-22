@@ -18,6 +18,10 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Descartar los registros de estaciones inactivas (`Activo != "T"`).
   - Descartar las filas con 0 bicis y 0 anclajes libres (anclajes averiados): no cuentan como llenas.
 - **"Llena"** = estación activa con `Espacios_libres == 0`.
+- **Tiempo**:
+  - `ts_utc` es el tiempo de referencia: ordenar, deduplicar y calcular t+60 siempre sobre él.
+  - `ts` (hora local Europe/Madrid) se conserva para las features.
+  - La hora repetida de octubre se resuelve por el orden de las fotos dentro del zip: hasta que la hora local retrocede es CEST; desde ahí, CET.
 - **Objetivo**: probabilidad de que la estación esté llena en t + 60 min exactos. Es una clasificación binaria desbalanceada: ~6 % de positivos.
 
 ## Reglas de trabajo

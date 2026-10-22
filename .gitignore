@@ -1,5 +1,6 @@
 # Datos (no se suben a GitHub)
 data/raw/
+data/processed/
 
 # Entorno virtual
 .venv/
@@ -11,3 +12,4 @@ __pycache__/
 .ipynb_checkpoints/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
