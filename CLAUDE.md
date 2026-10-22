@@ -1,0 +1,28 @@
+# Predicción de estaciones llenas de Valenbisi
+
+Proyecto de portfolio: estimar la probabilidad de que una estación de Valenbisi (València) esté **llena** (sin anclajes libres para dejar la bici) **exactamente dentro de 60 minutos**.
+
+El usuario quiere entender cada decisión: avanzar paso a paso y explicar el porqué.
+
+## Datos (`data/raw/`, no versionados)
+- `valenbici-master/`: un zip por día (`DD-MM-YYYY.zip`). Cada zip trae CSV con `;` como separador, una foto de todas las estaciones cada 15 min. Periodo: 2022-12-01 a 2025-09-24. Hora Europe/Madrid.
+  - **Cambio de esquema el 2023-05-22.** Antes: `number_, open, available, free, total, updated_at`. Después: `Numero, Activo, Bicis_disponibles, Espacios_libres, Espacios_totales, fecha_actualizacion`.
+  - La fecha y hora de cada foto salen del nombre del CSV (`valenbici_DD-MM-YYYY_HH-MM-SS.csv`).
+- `datos_tiempo/`: JSON diarios de AEMET (estación 8416 València) en latin-1. Los números vienen como texto con coma decimal y `prec="Ip"` significa precipitación inapreciable. Algunos ficheros contienen `404 datos expirados` (2020 y el segundo semestre de 2021); no afecta al periodo de las bicis.
+
+## Decisiones aprobadas
+- **Limpieza**:
+  - Descartar los periodos congelados: registros con `fecha_actualizacion` de más de 24 h respecto a la foto, o fotos idénticas a la anterior. Afecta sobre todo a ene–jun 2024 y ago 2024.
+  - Descartar las fotos vacías (solo cabecera).
+  - Descartar la estación 299 (de pruebas).
+  - Descartar los registros de estaciones inactivas (`Activo != "T"`).
+  - Descartar las filas con 0 bicis y 0 anclajes libres (anclajes averiados): no cuentan como llenas.
+- **"Llena"** = estación activa con `Espacios_libres == 0`.
+- **Objetivo**: probabilidad de que la estación esté llena en t + 60 min exactos. Es una clasificación binaria desbalanceada: ~6 % de positivos.
+
+## Reglas de trabajo
+- Windows con PowerShell; Python 3.12 en `.venv/`.
+- Explicar el plan antes de cualquier cambio grande y esperar el visto bueno.
+- Tests con pytest.
+- Commits pequeños, cada uno con un solo propósito.
+- No modificar nunca `data/raw/`.

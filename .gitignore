@@ -1,0 +1,13 @@
+# Datos (no se suben a GitHub)
+data/raw/
+
+# Entorno virtual
+.venv/
+
+# Cachés de Python y herramientas
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.mypy_cache/
+.ruff_cache/
