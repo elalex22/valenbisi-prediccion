@@ -21,7 +21,9 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 - **Tiempo**:
   - `ts_utc` es el tiempo de referencia: ordenar, deduplicar y calcular t+60 siempre sobre él.
   - `ts` (hora local Europe/Madrid) se conserva para las features.
-  - La hora repetida de octubre se resuelve por el orden de las fotos dentro del zip: hasta que la hora local retrocede es CEST; desde ahí, CET.
+  - Las fotos de la hora repetida de octubre (02:00–02:59 del último domingo) se descartan: los nombres no permiten saber de qué pasada son, porque solo cambian los segundos y los zips van en orden alfabético.
+  - Una hora inexistente de marzo se desplaza a las 03:00 y se cuenta en el resumen.
+  - Un zip no es siempre un día: puede traer fotos de varias fechas, y los ficheros van en orden alfabético. Hay que ordenar siempre por `ts_utc`.
 - **Objetivo**: probabilidad de que la estación esté llena en t + 60 min exactos. Es una clasificación binaria desbalanceada: ~6 % de positivos.
 
 ## Reglas de trabajo
