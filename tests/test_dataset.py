@@ -1,12 +1,14 @@
 import json
 
 import pandas as pd
+import pytest
 
 from fabrica import csv_antiguo, csv_nuevo, escribir_zip, nombre_foto
 from valenbisi.dataset import COLUMNAS_SALIDA, construir_dataset, formatear_resumen
 
 
-def test_extremo_a_extremo(carpeta_raw, tmp_path):
+def fabricar_zips(carpeta_raw):
+    """Dos zips (uno de cada esquema) que ejercitan todas las reglas."""
     # Zip con esquema antiguo: la estación 299, una inactiva y una normal.
     escribir_zip(carpeta_raw / "21-05-2023.zip", [
         (nombre_foto("21-05-2023", "10-00-01"), csv_antiguo([
@@ -32,6 +34,10 @@ def test_extremo_a_extremo(carpeta_raw, tmp_path):
             (2, "T", 3, 12, 15, "20/05/2023 10:10:00"),  # más de 24 h
         ])),
     ])
+
+
+def test_extremo_a_extremo(carpeta_raw, tmp_path):
+    fabricar_zips(carpeta_raw)
     salida = tmp_path / "processed"
     resumen = construir_dataset(carpeta_raw, salida)
 
@@ -64,6 +70,31 @@ def test_extremo_a_extremo(carpeta_raw, tmp_path):
     texto = formatear_resumen(resumen)
     assert "Duplicados (ts_utc, estación)" in texto
     assert "33,33 %" in texto
+
+
+def test_escribir_por_bloques_da_el_mismo_parquet(carpeta_raw, tmp_path):
+    fabricar_zips(carpeta_raw)
+    de_golpe = construir_dataset(carpeta_raw, tmp_path / "golpe", filas_por_bloque=10**9)
+    por_bloques = construir_dataset(carpeta_raw, tmp_path / "bloques", filas_por_bloque=1)
+
+    assert de_golpe == por_bloques
+    pd.testing.assert_frame_equal(
+        pd.read_parquet(tmp_path / "golpe" / "valenbisi_limpio.parquet"),
+        pd.read_parquet(tmp_path / "bloques" / "valenbisi_limpio.parquet"),
+    )
+    assert not list((tmp_path / "bloques").glob("*.tmp"))
+
+
+def test_zips_solapados_dan_error_y_no_dejan_parquet(carpeta_raw, tmp_path):
+    fila = [(1, "T", 5, 10, 15, "03/01/2024 09:55:00")]
+    # El zip del día 2 trae una foto del día 3, y el del día 3 una del día 2.
+    escribir_zip(carpeta_raw / "02-01-2024.zip", [(nombre_foto("03-01-2024", "10-00-00"), csv_nuevo(fila))])
+    escribir_zip(carpeta_raw / "03-01-2024.zip", [(nombre_foto("02-01-2024", "10-00-00"), csv_nuevo(fila))])
+    salida = tmp_path / "processed"
+
+    with pytest.raises(ValueError, match="no están en orden"):
+        construir_dataset(carpeta_raw, salida)
+    assert not list(salida.glob("*.parquet*"))
 
 
 def test_formatear_resumen_usa_punto_para_los_miles():

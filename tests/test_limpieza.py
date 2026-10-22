@@ -1,9 +1,9 @@
 import pandas as pd
 
 from valenbisi.limpieza import (
-    REGLAS_GLOBALES,
-    REGLAS_POR_TROZO,
+    QuitarFotosIdenticas,
     aplicar_reglas,
+    crear_reglas,
     marcar_llena,
     quitar_desactualizadas,
     quitar_duplicados,
@@ -82,6 +82,15 @@ def test_fotos_identicas_no_depende_del_orden_de_las_filas():
     assert quitar_fotos_identicas(df)["ts"].dt.strftime("%H:%M").unique().tolist() == ["10:00"]
 
 
+def test_foto_identica_a_la_ultima_del_trozo_anterior_se_quita():
+    regla = QuitarFotosIdenticas()
+    trozo_1 = filas(("2024-01-01 23:45", 1, True, 5, 10, "2024-01-01 23:40"))
+    trozo_2 = filas(("2024-01-02 00:00", 1, True, 5, 10, "2024-01-01 23:40"),  # igual que 23:45
+                    ("2024-01-02 00:15", 1, True, 4, 11, "2024-01-02 00:10"))
+    assert len(regla(trozo_1)) == 1
+    assert regla(trozo_2)["ts"].dt.strftime("%H:%M").tolist() == ["00:15"]
+
+
 def test_quita_cero_bicis_y_cero_huecos():
     df = filas(("2024-01-01 10:00", 1, True, 0, 0, "2024-01-01 09:55"),
                ("2024-01-01 10:00", 2, True, 0, 15, "2024-01-01 09:55"),
@@ -110,8 +119,8 @@ def test_conteos_del_resumen_cuadran_y_se_acumulan_por_trozos():
                     ("2024-01-02 10:00", 3, True, 0, 0, "2024-01-02 09:55"),   # 0 y 0
                     ("2024-01-02 10:00", 4, True, 9, 6, "2024-01-02 09:55"))
     conteo: dict[str, list[int]] = {}
-    limpio = pd.concat([aplicar_reglas(t, REGLAS_POR_TROZO, conteo) for t in (trozo_1, trozo_2)])
-    limpio = aplicar_reglas(limpio, REGLAS_GLOBALES, conteo)
+    reglas = crear_reglas()
+    limpio = pd.concat([aplicar_reglas(t, reglas, conteo) for t in (trozo_1, trozo_2)])
 
     pasos = list(conteo.values())
     assert pasos[0][0] == 6
