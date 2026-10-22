@@ -25,6 +25,11 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Una hora inexistente de marzo se desplaza a las 03:00 y se cuenta en el resumen.
   - Un zip no es siempre un día: puede traer fotos de varias fechas, y los ficheros van en orden alfabético. Hay que ordenar siempre por `ts_utc`.
 - **Objetivo**: probabilidad de que la estación esté llena en t + 60 min exactos. Es una clasificación binaria desbalanceada: ~6 % de positivos.
+  - `slot_utc` = `ts_utc` redondeado al múltiplo de 15 min más cercano. Da error si una foto se desvía más de 5 min o si dos fotos caen en el mismo (slot, estación).
+  - `llena_60` = `llena` de la misma estación en `slot_utc + 60 min` exactos. Si no existe, la fila se descarta: nunca se rellena con t+45 ni t+75.
+  - De t+60 solo se guarda `llena_60`, para evitar fugas. Las features solo pueden usar datos con `slot_utc ≤ t`.
+  - El reparto entrenamiento/prueba será temporal, con un hueco de 60 min en la frontera.
+  - Referencia a batir: si está llena ahora, lo está a t+60 el ~61 % de las veces; si no, el ~2,4 %.
 
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
