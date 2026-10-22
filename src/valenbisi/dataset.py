@@ -33,7 +33,7 @@ def resumir_estaciones(conteos: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(columnas, axis=1).sort_index().reset_index()
 
 
-class _EscritorPorBloques:
+class EscritorPorBloques:
     """Acumula trozos y los escribe en un Parquet en bloques de ``filas_por_bloque``.
 
     Escribe en un fichero temporal y solo lo renombra al cerrar sin errores,
@@ -103,7 +103,7 @@ def construir_dataset(
     ts_min = ts_max = None
     ultima_ts_utc = None
 
-    escritor = _EscritorPorBloques(carpeta_salida / "valenbisi_limpio.parquet", filas_por_bloque)
+    escritor = EscritorPorBloques(carpeta_salida / "valenbisi_limpio.parquet", filas_por_bloque)
     try:
         for i, ruta in enumerate(zips, start=1):
             df, info = leer_zip(ruta)
@@ -168,7 +168,7 @@ def construir_dataset(
     return resumen
 
 
-def _n(numero: int) -> str:
+def formatear_entero(numero: int) -> str:
     """Entero con punto como separador de miles (25.000.000)."""
     return f"{numero:,}".replace(",", ".")
 
@@ -176,8 +176,8 @@ def _n(numero: int) -> str:
 def formatear_resumen(resumen: dict) -> str:
     """Tabla de texto con las filas antes y después de cada regla, y las cifras finales."""
     lineas = [
-        f"Zips leídos: {resumen['zips']}   Fotos: {_n(resumen['fotos'])}   "
-        f"Fotos vacías (sin filas): {_n(resumen['fotos_vacias'])}",
+        f"Zips leídos: {resumen['zips']}   Fotos: {formatear_entero(resumen['fotos'])}   "
+        f"Fotos vacías (sin filas): {formatear_entero(resumen['fotos_vacias'])}",
         f"Cambio de hora: {resumen['fotos_hora_repetida']} fotos de la hora repetida de octubre, "
         f"{resumen['fotos_hora_inexistente']} fotos en hora inexistente de marzo (desplazadas)",
         "",
@@ -187,15 +187,15 @@ def formatear_resumen(resumen: dict) -> str:
     for paso in resumen["reglas"]:
         pct = paso["eliminadas"] / paso["antes"] * 100 if paso["antes"] else 0.0
         lineas.append(
-            f"{paso['regla']:<32}{_n(paso['antes']):>14}{_n(paso['eliminadas']):>14}"
-            f"{pct:>6.1f}%{_n(paso['despues']):>14}"
+            f"{paso['regla']:<32}{formatear_entero(paso['antes']):>14}{formatear_entero(paso['eliminadas']):>14}"
+            f"{pct:>6.1f}%{formatear_entero(paso['despues']):>14}"
         )
     desde, hasta = resumen["periodo_local"]
     lineas += [
         "",
         f"Periodo (hora local): {desde} → {hasta}",
-        f"Fotos finales: {_n(resumen['fotos_finales'])}   Estaciones: {resumen['estaciones']}   "
-        f"Filas: {_n(resumen['filas'])}",
+        f"Fotos finales: {formatear_entero(resumen['fotos_finales'])}   Estaciones: {resumen['estaciones']}   "
+        f"Filas: {formatear_entero(resumen['filas'])}",
         f"Registros 'llena': {str(resumen['porcentaje_llena']).replace('.', ',')} %",
     ]
     return "\n".join(lineas)
