@@ -28,8 +28,15 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - `slot_utc` = `ts_utc` redondeado al múltiplo de 15 min más cercano. Da error si una foto se desvía más de 5 min o si dos fotos caen en el mismo (slot, estación).
   - `llena_60` = `llena` de la misma estación en `slot_utc + 60 min` exactos. Si no existe, la fila se descarta: nunca se rellena con t+45 ni t+75.
   - De t+60 solo se guarda `llena_60`, para evitar fugas. Las features solo pueden usar datos con `slot_utc ≤ t`.
-  - El reparto entrenamiento/prueba será temporal, con un hueco de 60 min en la frontera.
-  - Referencia a batir: si está llena ahora, lo está a t+60 el ~61 % de las veces; si no, el ~2,4 %.
+- **Evaluación** (`src/valenbisi/evaluacion.py`):
+  - Reparto temporal por `slot_utc`, con fronteras a medianoche Europe/Madrid. Entrenamiento hasta el 2024-08-31, validación del 2024-09-01 al 2025-02-28 y prueba desde el 2025-03-01.
+  - Hueco de 60 min antes de cada frontera: una fila solo entra en un conjunto si su t+60 también cae en él.
+  - Todo lo que se ajusta (referencias, modelos) usa solo entrenamiento. Validación sirve para elegir; prueba solo para el resultado final.
+  - Métricas: AUC-PR (el azar saca la proporción de positivos), Brier y Brier skill score frente a la constante de entrenamiento, y una curva de calibración por tramos de cuantiles.
+- **Referencias a batir** (`scripts/evaluar_referencias.py`, en prueba):
+  - Persistencia: 62,7 % si está llena ahora y 2,3 % si no, ajustada con entrenamiento. AUC-PR 0,380, Brier skill 0,326.
+  - Frecuencia por (estación, hora local de t, laborable/fin de semana), con respaldo (hora, tipo de día) si la celda tiene menos de 30 filas. AUC-PR 0,284, Brier skill 0,133. Los festivos cuentan como laborables.
+  - La persistencia gana en conjunto, pero no sabe ordenar dentro de cada grupo. Entre las estaciones que no están llenas ahora, la frecuencia ordena mucho mejor (AUC-PR 0,100 frente a 0,025). El modelo tiene que combinar las dos cosas.
 
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
