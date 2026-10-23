@@ -1,6 +1,7 @@
+import numpy as np
 import pandas as pd
 
-from valenbisi.evaluacion import FRONTERAS, repartir
+from valenbisi.evaluacion import FRONTERAS, metricas, repartir, tabla_calibracion
 
 F1, F2 = FRONTERAS["validacion"], FRONTERAS["prueba"]
 
@@ -43,3 +44,38 @@ def test_ninguna_etiqueta_cae_en_el_conjunto_siguiente():
     assert not usados.duplicated().any()
     assert len(usados) + sum(conteo["descartadas"].values()) == len(slots)
     assert conteo["filas"] == {nombre: len(c) for nombre, c in conjuntos.items()}
+
+
+def test_metricas_de_una_prediccion_perfecta():
+    y = [True, False, False, False]
+    m = metricas(y, [1.0, 0.0, 0.0, 0.0], p_constante=0.25)
+    assert m == {"filas": 4, "porcentaje_positivos": 25.0, "auc_pr": 1.0, "brier": 0.0, "brier_skill": 1.0}
+
+
+def test_metricas_de_la_constante_no_aportan_nada():
+    y = [True, False, False, False]
+    m = metricas(y, [0.25] * 4, p_constante=0.25)
+    assert m["auc_pr"] == 0.25  # la proporción de positivos: lo que saca el azar
+    assert m["brier"] == round((0.75**2 + 3 * 0.25**2) / 4, 5)
+    assert m["brier_skill"] == 0.0
+
+
+def test_calibracion_con_dos_valores_da_dos_tramos():
+    y = [True, False, False, False, True, True, False, True]
+    p = [0.1, 0.1, 0.1, 0.1, 0.7, 0.7, 0.7, 0.7]
+    tabla = tabla_calibracion(y, p)
+    assert tabla["filas"].tolist() == [4, 4]
+    assert tabla["p_media"].tolist() == [0.1, 0.7]
+    assert tabla["frecuencia_real"].tolist() == [0.25, 0.75]
+
+
+def test_calibracion_por_cuantiles_reparte_las_filas():
+    p = np.linspace(0, 1, 100)
+    tabla = tabla_calibracion(p > 0.5, p, n_tramos=4)
+    assert tabla["filas"].tolist() == [25, 25, 25, 25]
+    assert tabla["p_media"].is_monotonic_increasing
+    assert tabla["frecuencia_real"].tolist() == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_calibracion_de_una_constante_da_un_tramo():
+    assert tabla_calibracion([True, False], [0.3, 0.3])["filas"].tolist() == [2]
