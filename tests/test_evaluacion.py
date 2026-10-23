@@ -69,6 +69,15 @@ def test_calibracion_con_dos_valores_da_dos_tramos():
     assert tabla["frecuencia_real"].tolist() == [0.25, 0.75]
 
 
+def test_calibracion_con_un_valor_muy_frecuente_separa_el_raro():
+    # Como la persistencia real: casi todas las filas comparten probabilidad.
+    y = [False] * 8 + [True, True]
+    p = [0.1] * 9 + [0.7]
+    tabla = tabla_calibracion(y, p)
+    assert tabla["filas"].tolist() == [9, 1]
+    assert tabla["p_media"].tolist() == [0.1, 0.7]
+
+
 def test_calibracion_por_cuantiles_reparte_las_filas():
     p = np.linspace(0, 1, 100)
     tabla = tabla_calibracion(p > 0.5, p, n_tramos=4)

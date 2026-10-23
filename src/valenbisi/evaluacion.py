@@ -74,10 +74,8 @@ def tabla_calibracion(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, n_tr
     (como la persistencia) da pocos tramos.
     """
     datos = pd.DataFrame({"y": np.asarray(y, dtype=bool), "p": np.asarray(p, dtype=float)})
-    cortes = np.unique(np.quantile(datos["p"], np.linspace(0, 1, n_tramos + 1)))
-    if len(cortes) == 1:
-        tramo = np.zeros(len(datos), dtype=int)
-    else:
-        tramo = pd.cut(datos["p"], cortes, include_lowest=True, labels=False)
+    # Solo los cortes interiores: un valor igual a un corte va al tramo de la izquierda.
+    cortes = np.unique(np.quantile(datos["p"], np.linspace(0, 1, n_tramos + 1)[1:-1]))
+    tramo = np.searchsorted(cortes, datos["p"], side="left")
     tabla = datos.groupby(tramo).agg(filas=("y", "size"), p_media=("p", "mean"), frecuencia_real=("y", "mean"))
     return tabla.reset_index(drop=True)
