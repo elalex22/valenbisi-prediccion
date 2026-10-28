@@ -15,6 +15,8 @@ from valenbisi.evaluacion import ZONA
 # - 2022: decreto autonómico; el lunes 26-12 no fue festivo (se cambió por el 24-06).
 # - 2023: los dos locales son San Vicente Ferrer (17-04) y el traslado de San
 #   Vicente Mártir (domingo 22-01) al 24-04, aprobado en pleno municipal.
+#   El 24-04-2023 no está confirmado en fuente oficial (solo prensa y
+#   calendarios de terceros); se cuenta como festivo igualmente.
 # - 2024: Decreto 164/2023 del Consell; locales 22-01 y 08-04.
 # - 2025: Decreto 100/2024 del Consell; locales 22-01 y 28-04.
 # El 24 de junio (San Juan) es festivo «recuperable» en 2024 y 2025: no se trabaja, cuenta.

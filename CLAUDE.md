@@ -38,6 +38,11 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Frecuencia por (estación, hora local de t, laborable/fin de semana), con respaldo (hora, tipo de día) si la celda tiene menos de 30 filas. AUC-PR 0,284, Brier skill 0,133. Los festivos cuentan como laborables.
   - La persistencia gana en conjunto, pero no sabe ordenar dentro de cada grupo. Entre las estaciones que no están llenas ahora, la frecuencia ordena mucho mejor (AUC-PR 0,100 frente a 0,025). El modelo tiene que combinar las dos cosas.
 
+- **Festivos** (`src/valenbisi/calendario.py`): tabla escrita a mano con los nacionales, autonómicos y locales de València (2022-12 a 2025-12), revisada.
+  - El 26-12-2022 no es festivo: el decreto autonómico lo cambió por el 24-06.
+  - El 24-06 «recuperable» de 2024 y 2025 cuenta como festivo, porque no se trabaja.
+  - El 24-04-2023 (traslado de San Vicente Mártir) cuenta como festivo, pero **no está confirmado en fuente oficial**: solo sale en prensa y en calendarios de terceros.
+
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
 - Explicar el plan antes de cualquier cambio grande y esperar el visto bueno.
