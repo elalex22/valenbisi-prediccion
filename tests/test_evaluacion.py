@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-from valenbisi.evaluacion import FRONTERAS, evaluar, metricas, repartir, tabla_calibracion
+from valenbisi.evaluacion import CONJUNTOS, FRONTERAS, evaluar, limites, metricas, repartir, tabla_calibracion
 
 F1, F2 = FRONTERAS["validacion"], FRONTERAS["prueba"]
 
@@ -98,3 +100,14 @@ def test_evaluar_separa_por_llena_ahora():
     assert resultado["todas"]["modelo"]["filas"] == 4
     assert resultado["llena_ahora"]["modelo"]["filas"] == 2
     assert resultado["no_llena_ahora"]["modelo"]["auc_pr"] == 1.0
+
+
+def test_limites_leen_del_parquet_las_mismas_filas_que_repartir(tmp_path):
+    slots = [F1 - minutos(m) for m in (90, 60, 45, 0)] + [F1, F1 + minutos(15)] +             [F2 - minutos(m) for m in (75, 60, 15)] + [F2, F2 + minutos(600)]
+    df = filas(*slots).assign(slot_utc=lambda d: d["slot_utc"].astype("datetime64[us, UTC]"))
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), tmp_path / "f.parquet")
+    conjuntos, _ = repartir(df)
+
+    for nombre in CONJUNTOS:
+        leido = pd.read_parquet(tmp_path / "f.parquet", filters=limites(nombre) or None)
+        assert leido["slot_utc"].tolist() == conjuntos[nombre]["slot_utc"].tolist(), nombre

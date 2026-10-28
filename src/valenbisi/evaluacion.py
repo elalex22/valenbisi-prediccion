@@ -45,6 +45,23 @@ def repartir(df: pd.DataFrame, fronteras: dict[str, pd.Timestamp] = FRONTERAS) -
     return conjuntos, conteo
 
 
+def limites(nombre: str, fronteras: dict[str, pd.Timestamp] = FRONTERAS) -> list[tuple]:
+    """Filtros de pyarrow con el ``slot_utc`` de un conjunto, con el hueco ya descontado.
+
+    Dan las mismas filas que :func:`repartir`, pero permiten leer del Parquet solo
+    un conjunto: el entrenamiento nunca carga validación ni prueba.
+    """
+    i = CONJUNTOS.index(nombre)
+    inicio = [None, *fronteras.values()][i]
+    fin = [*fronteras.values(), None][i]
+    filtros = []
+    if inicio is not None:
+        filtros.append(("slot_utc", ">=", inicio))
+    if fin is not None:
+        filtros.append(("slot_utc", "<", fin - HORIZONTE))
+    return filtros
+
+
 def metricas(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, p_constante: float) -> dict:
     """AUC-PR, Brier y Brier skill score de las probabilidades ``p`` frente a la realidad ``y``.
 
