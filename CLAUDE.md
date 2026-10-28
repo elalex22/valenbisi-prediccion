@@ -37,11 +37,32 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Persistencia: 62,7 % si está llena ahora y 2,3 % si no, ajustada con entrenamiento. AUC-PR 0,380, Brier skill 0,326.
   - Frecuencia por (estación, hora local de t, laborable/fin de semana), con respaldo (hora, tipo de día) si la celda tiene menos de 30 filas. AUC-PR 0,284, Brier skill 0,133. Los festivos cuentan como laborables.
   - La persistencia gana en conjunto, pero no sabe ordenar dentro de cada grupo. Entre las estaciones que no están llenas ahora, la frecuencia ordena mucho mejor (AUC-PR 0,100 frente a 0,025). El modelo tiene que combinar las dos cosas.
-
+  - En validación: persistencia AUC-PR 0,393 y Brier skill 0,341; frecuencia 0,295 y 0,146.
+- **Features** (`src/valenbisi/features.py`, `scripts/construir_features.py` → `data/processed/valenbisi_features.parquet`):
+  - Estado actual: `llena`, `libres`, `bicis`, `total` y `ocupacion = bicis / (bicis + libres)`. Se divide entre los anclajes que funcionan, así que una estación llena con anclajes averiados da 1,0.
+  - Tendencia: `delta_libres_k = libres(t) − libres(t−k)` para k = 15, 30 y 60 min.
+    - La foto de t−k se busca por clave exacta (estación, `slot_utc − k`) en el Parquet **limpio**, no en el de objetivo: las fotos sin etiqueta a t+60 siguen siendo un pasado válido.
+    - Si falta la foto, la delta queda `NaN`. Nunca se rellena con otra foto ni con 0. Pasa en el 0,8–1,1 % de las filas.
+  - Estación: `estacion` como categórica nativa de LightGBM, más `lat` y `lon`.
+  - Calendario (`src/valenbisi/calendario.py`): `minuto_del_dia`, `dia_semana`, `mes` y `festivo`, en hora local a partir de `slot_utc`.
+  - Meteorología (`src/valenbisi/tiempo.py`): `tmed`, `tmin`, `tmax`, `prec` y `sol` **del día local anterior**, con el sufijo `_ayer`. El dato del mismo día sería una fuga, porque incluye horas que aún no han pasado. `"Ip"` se convierte en 0,05 mm.
+  - Un test de fuga cambia y borra las fotos posteriores a t y comprueba que las features de t no cambian.
 - **Festivos** (`src/valenbisi/calendario.py`): tabla escrita a mano con los nacionales, autonómicos y locales de València (2022-12 a 2025-12), revisada.
   - El 26-12-2022 no es festivo: el decreto autonómico lo cambió por el 24-06.
   - El 24-06 «recuperable» de 2024 y 2025 cuenta como festivo, porque no se trabaja.
   - El 24-04-2023 (traslado de San Vicente Mártir) cuenta como festivo, pero **no está confirmado en fuente oficial**: solo sale en prensa y en calendarios de terceros.
+- **Primer modelo: LightGBM** (`src/valenbisi/modelo.py`, `scripts/entrenar_lightgbm.py`):
+  - Pérdida logística **sin pesos de clase**: nada de `is_unbalance`, `scale_pos_weight` ni submuestreo de negativos, que estropearían la calibración. Si algún día no cabe en memoria, solo vale una muestra uniforme de todas las filas, y hay que avisar antes.
+  - Parámetros: `num_leaves=63`, `learning_rate=0.05`, `min_data_in_leaf=1000`, `feature_fraction` y `bagging_fraction` de 0,8, y `lambda_l2=1`. No hay búsqueda de hiperparámetros todavía.
+  - Se entrena solo con entrenamiento. La parada temprana usa la logloss de validación (paciencia de 100 árboles), y se queda con 1040 árboles. Por eso la cifra de validación sale algo optimista.
+  - Cada conjunto se lee del Parquet con su propio filtro (`limites()` en `evaluacion.py`). La prueba no se ha cargado nunca.
+  - **Resultado en validación**: AUC-PR **0,715** y Brier skill **0,490**.
+    - Llena ahora: 0,859 y 0,674.
+    - No llena ahora: 0,327 y 0,241.
+  - Comprobación de que no hay fuga: una tabla de probabilidad solo con `libres` y sin machine learning ya saca AUC-PR 0,512. Con 1 anclaje libre, el 23 % de las estaciones está llena a t+60. La mejora sale de ver cuántos huecos quedan, no solo si está llena o no.
+  - Calibración buena en general, pero **se queda algo corta en la zona media**: predice un 3,7 % donde la realidad es un 4,7 %, y un 10,7 % donde es un 12,1 %. Está pendiente decidir si se recalibra (con una parte de entrenamiento, nunca con validación).
+  - Importancia por permutación (caída de AUC-PR): estado actual 0,64 (`ocupacion` y `libres`), calendario 0,19 (`minuto_del_dia`), estación 0,09. La tendencia (0,005) y el tiempo de ayer (0,003) apenas aportan.
+  - Figuras en `reports/figures/*_lightgbm_validacion.png`, resumen en `data/processed/resumen_lightgbm.json` y modelo en `models/lightgbm.txt` (sin versionar).
 
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
@@ -49,3 +70,5 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 - Tests con pytest.
 - Commits pequeños, cada uno con un solo propósito.
 - No modificar nunca `data/raw/`.
+- Memoria: el equipo tiene 15,4 GB y suelen quedar unos 4 GB libres. Los scripts grandes vigilan la RAM con `src/valenbisi/memoria.py` y se paran si quedan menos de 1,5 GB libres. Si algo no cabe, avisar antes de reducir datos.
+- La prueba no se toca hasta el resultado final.
