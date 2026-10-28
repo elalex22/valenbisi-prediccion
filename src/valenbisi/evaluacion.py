@@ -97,6 +97,26 @@ def evaluar(conjunto: pd.DataFrame, predicciones: dict[str, np.ndarray], p_const
     }
 
 
+# Tramos de anclajes libres en t, (mínimo, máximo) incluidos; None = sin máximo.
+TRAMOS_LIBRES = {"0": (0, 0), "1": (1, 1), "2-3": (2, 3), "4-6": (4, 6), "7+": (7, None)}
+
+
+def evaluar_por_tramos(conjunto: pd.DataFrame, predicciones: dict[str, np.ndarray], p_constante: float,
+                       tramos: dict[str, tuple[int, int | None]] = TRAMOS_LIBRES) -> dict:
+    """Métricas de cada modelo por tramos de ``libres`` en t.
+
+    Separa la zona donde de verdad se decide si una estación se llena (pocos
+    huecos) de la mayoría de filas, con muchos huecos, donde acertar es fácil.
+    """
+    y = conjunto["llena_60"].to_numpy()
+    libres = conjunto["libres"].to_numpy()
+    resultado = {}
+    for nombre, (minimo, maximo) in tramos.items():
+        filtro = (libres >= minimo) & (libres <= (np.inf if maximo is None else maximo))
+        resultado[nombre] = {modelo: metricas(y[filtro], p[filtro], p_constante) for modelo, p in predicciones.items()}
+    return resultado
+
+
 def tabla_calibracion(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, n_tramos: int = 10) -> pd.DataFrame:
     """Probabilidad media predicha frente a frecuencia real, por tramos de ``p``.
 

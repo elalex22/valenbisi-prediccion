@@ -3,7 +3,16 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from valenbisi.evaluacion import CONJUNTOS, FRONTERAS, evaluar, limites, metricas, repartir, tabla_calibracion
+from valenbisi.evaluacion import (
+    CONJUNTOS,
+    FRONTERAS,
+    evaluar,
+    evaluar_por_tramos,
+    limites,
+    metricas,
+    repartir,
+    tabla_calibracion,
+)
 
 F1, F2 = FRONTERAS["validacion"], FRONTERAS["prueba"]
 
@@ -100,6 +109,18 @@ def test_evaluar_separa_por_llena_ahora():
     assert resultado["todas"]["modelo"]["filas"] == 4
     assert resultado["llena_ahora"]["modelo"]["filas"] == 2
     assert resultado["no_llena_ahora"]["modelo"]["auc_pr"] == 1.0
+
+
+def test_evaluar_por_tramos_de_libres():
+    conjunto = pd.DataFrame({"libres": [0, 0, 1, 2, 3, 3, 20],
+                             "llena_60": [True, False, True, False, True, False, True]})
+    p = np.array([0.7, 0.6, 0.3, 0.1, 0.2, 0.05, 0.0])
+    tramos = {"0": (0, 0), "1-3": (1, 3), "4+": (4, None)}
+    resultado = evaluar_por_tramos(conjunto, {"modelo": p}, p_constante=0.5, tramos=tramos)
+
+    assert [resultado[t]["modelo"]["filas"] for t in tramos] == [2, 4, 1]
+    assert resultado["1-3"]["modelo"]["porcentaje_positivos"] == 50.0
+    assert resultado["1-3"]["modelo"]["auc_pr"] == 1.0
 
 
 def test_limites_leen_del_parquet_las_mismas_filas_que_repartir(tmp_path):
