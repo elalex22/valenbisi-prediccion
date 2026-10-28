@@ -25,15 +25,13 @@ from sklearn.metrics import precision_recall_curve
 
 from valenbisi.dataset import formatear_entero
 from valenbisi.evaluacion import evaluar, repartir, tabla_calibracion
+from valenbisi.figuras import COLORES, GRIS, TEXTO, TEXTO_SUAVE, estilo_ejes, guardar
 from valenbisi.referencias import ajustar_frecuencia, ajustar_persistencia, predecir_frecuencia, predecir_persistencia
 
 RAIZ = Path(__file__).resolve().parents[1]
 COLUMNAS = ["slot_utc", "estacion", "llena", "llena_60"]
 MODELOS = ("constante", "persistencia", "frecuencia")
 NOMBRES = {"constante": "Constante", "persistencia": "Persistencia", "frecuencia": "Frecuencia histórica"}
-# Paleta categórica por defecto (azul, naranja); gris para las líneas de referencia.
-COLORES = {"persistencia": "#2a78d6", "frecuencia": "#eb6834"}
-GRIS, TEXTO, TEXTO_SUAVE = "#8f8e8a", "#0b0b0b", "#52514e"
 
 
 def figura_calibracion(y: np.ndarray, predicciones: dict[str, np.ndarray], ruta: Path) -> None:
@@ -71,23 +69,6 @@ def figura_pr(y: np.ndarray, predicciones: dict[str, np.ndarray], resultados: di
     ax.set_title("Curva precisión-recall en prueba", loc="left", color=TEXTO)
     ax.legend(frameon=False, loc="upper right")
     guardar(fig, ruta)
-
-
-def estilo_ejes(ax) -> None:
-    ax.grid(color="#e6e5e1", linewidth=0.8)
-    ax.set_axisbelow(True)
-    for lado in ("top", "right"):
-        ax.spines[lado].set_visible(False)
-    for lado in ("left", "bottom"):
-        ax.spines[lado].set_color(GRIS)
-    ax.tick_params(colors=TEXTO_SUAVE)
-
-
-def guardar(fig, ruta: Path) -> None:
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(ruta, dpi=150)
-    plt.close(fig)
 
 
 def formatear(resumen: dict, conjunto: str) -> str:
