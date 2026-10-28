@@ -13,3 +13,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+
+# Modelos entrenados (se regeneran con los scripts)
+models/
