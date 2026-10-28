@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from valenbisi.evaluacion import FRONTERAS, metricas, repartir, tabla_calibracion
+from valenbisi.evaluacion import FRONTERAS, evaluar, metricas, repartir, tabla_calibracion
 
 F1, F2 = FRONTERAS["validacion"], FRONTERAS["prueba"]
 
@@ -88,3 +88,13 @@ def test_calibracion_por_cuantiles_reparte_las_filas():
 
 def test_calibracion_de_una_constante_da_un_tramo():
     assert tabla_calibracion([True, False], [0.3, 0.3])["filas"].tolist() == [2]
+
+
+def test_evaluar_separa_por_llena_ahora():
+    conjunto = pd.DataFrame({"llena": [True, True, False, False], "llena_60": [True, False, True, False]})
+    resultado = evaluar(conjunto, {"modelo": np.array([0.9, 0.2, 0.6, 0.1])}, p_constante=0.5)
+
+    assert set(resultado) == {"todas", "llena_ahora", "no_llena_ahora"}
+    assert resultado["todas"]["modelo"]["filas"] == 4
+    assert resultado["llena_ahora"]["modelo"]["filas"] == 2
+    assert resultado["no_llena_ahora"]["modelo"]["auc_pr"] == 1.0

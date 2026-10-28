@@ -24,7 +24,7 @@ import pandas as pd
 from sklearn.metrics import precision_recall_curve
 
 from valenbisi.dataset import formatear_entero
-from valenbisi.evaluacion import metricas, repartir, tabla_calibracion
+from valenbisi.evaluacion import evaluar, repartir, tabla_calibracion
 from valenbisi.referencias import ajustar_frecuencia, ajustar_persistencia, predecir_frecuencia, predecir_persistencia
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -34,17 +34,6 @@ NOMBRES = {"constante": "Constante", "persistencia": "Persistencia", "frecuencia
 # Paleta categórica por defecto (azul, naranja); gris para las líneas de referencia.
 COLORES = {"persistencia": "#2a78d6", "frecuencia": "#eb6834"}
 GRIS, TEXTO, TEXTO_SUAVE = "#8f8e8a", "#0b0b0b", "#52514e"
-
-
-def evaluar(conjunto: pd.DataFrame, predicciones: dict[str, np.ndarray], p_constante: float) -> dict:
-    """Métricas de cada modelo en todo el conjunto y separadas por «llena ahora»."""
-    y = conjunto["llena_60"].to_numpy()
-    llena = conjunto["llena"].to_numpy()
-    grupos = {"todas": np.ones(len(y), dtype=bool), "llena_ahora": llena, "no_llena_ahora": ~llena}
-    return {
-        grupo: {modelo: metricas(y[filtro], p[filtro], p_constante) for modelo, p in predicciones.items()}
-        for grupo, filtro in grupos.items()
-    }
 
 
 def figura_calibracion(y: np.ndarray, predicciones: dict[str, np.ndarray], ruta: Path) -> None:

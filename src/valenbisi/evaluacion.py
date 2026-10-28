@@ -65,6 +65,21 @@ def metricas(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, p_constante: 
     }
 
 
+def evaluar(conjunto: pd.DataFrame, predicciones: dict[str, np.ndarray], p_constante: float) -> dict:
+    """Métricas de cada modelo en todo el conjunto y separadas por «llena ahora».
+
+    La separación muestra lo que la cifra global esconde: la persistencia solo
+    acierta porque casi todo sigue igual, y dentro de cada grupo no ordena nada.
+    """
+    y = conjunto["llena_60"].to_numpy()
+    llena = conjunto["llena"].to_numpy()
+    grupos = {"todas": np.ones(len(y), dtype=bool), "llena_ahora": llena, "no_llena_ahora": ~llena}
+    return {
+        grupo: {modelo: metricas(y[filtro], p[filtro], p_constante) for modelo, p in predicciones.items()}
+        for grupo, filtro in grupos.items()
+    }
+
+
 def tabla_calibracion(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, n_tramos: int = 10) -> pd.DataFrame:
     """Probabilidad media predicha frente a frecuencia real, por tramos de ``p``.
 
