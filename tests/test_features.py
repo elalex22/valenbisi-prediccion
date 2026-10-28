@@ -2,7 +2,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from valenbisi.features import FEATURES, construir_features, deltas_libres, estado_actual, tiempo_de_ayer
+from valenbisi.features import (
+    FEATURES,
+    construir_features,
+    deltas_libres,
+    estado_actual,
+    preparar_referencia,
+    tiempo_de_ayer,
+)
 
 DIA = "2024-01-15"  # lunes
 
@@ -23,7 +30,7 @@ def fotos(*registros) -> pd.DataFrame:
 
 def deltas(filas: pd.DataFrame, referencia: pd.DataFrame | None = None) -> dict:
     """{(hora, estacion): (delta_15, delta_30, delta_60)} con NaN como None."""
-    d = deltas_libres(filas, filas if referencia is None else referencia)
+    d = deltas_libres(filas, preparar_referencia(filas if referencia is None else referencia))
     return {
         (s.strftime("%H:%M"), int(e)): tuple(None if np.isnan(v) else float(v) for v in fila)
         for s, e, fila in zip(filas["slot_utc"], filas["estacion"], d.to_numpy())
@@ -63,7 +70,7 @@ def test_las_fotos_sin_etiqueta_tambien_sirven_de_pasado():
 
 def test_referencia_con_fotos_repetidas_da_error():
     with pytest.raises(ValueError, match="mismo"):
-        deltas_libres(fotos(("10:00", 1, 1)), fotos(("10:00", 1, 1), ("10:00", 1, 2)))
+        preparar_referencia(fotos(("10:00", 1, 1), ("10:00", 1, 2)))
 
 
 def test_ocupacion_con_anclajes_averiados():
@@ -85,7 +92,7 @@ def test_el_tiempo_es_el_del_dia_local_anterior():
 
 def test_construir_features_da_todas_las_columnas():
     df = fotos(("10:00", 1, 10), ("10:15", 1, 8), ("10:15", 2, 0)).assign(llena_60=[False, True, True])
-    out = construir_features(df, df, TIEMPO, ESTACIONES)
+    out = construir_features(df, preparar_referencia(df), TIEMPO, ESTACIONES)
 
     assert list(out.columns) == ["slot_utc", *FEATURES, "llena_60"]
     assert out["lat"].tolist() == pytest.approx([39.47, 39.47, 39.48])
@@ -108,8 +115,8 @@ def test_sin_fuga_cambiar_el_futuro_no_cambia_las_features_de_t():
     # Y además se borra parte del futuro: tampoco puede influir que falte.
     alterado = alterado.drop(alterado.index[futuro & (alterado["estacion"] == 2)])
 
-    antes = construir_features(original, original, TIEMPO, ESTACIONES)
-    despues = construir_features(alterado, alterado, TIEMPO, ESTACIONES)
+    antes = construir_features(original, preparar_referencia(original), TIEMPO, ESTACIONES)
+    despues = construir_features(alterado, preparar_referencia(alterado), TIEMPO, ESTACIONES)
     pasado_antes = antes[antes["slot_utc"] <= corte].reset_index(drop=True)
     pasado_despues = despues[despues["slot_utc"] <= corte].reset_index(drop=True)
     pd.testing.assert_frame_equal(pasado_antes, pasado_despues)
