@@ -149,12 +149,15 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 - **Meteorología horaria (candidata para la v2)** (`src/valenbisi/open_meteo.py`, `scripts/descargar_open_meteo.py` → `data/raw/open_meteo/`): Open-Meteo Historical Weather API, «best match» (ERA5, ERA5-Land e IFS), en el punto 39,47 N; −0,37 E, en UTC.
   - Licencia CC BY 4.0 («Weather data by Open-Meteo.com»). La API gratuita es solo para uso no comercial.
   - Una sola descarga, del 30-11-2022 al 28-10-2026: 34.296 horas, sin huecos.
-  - **Features en t** (con `h = t` truncada a la hora): `temp`, `humedad`, `viento` y `nubosidad` instantáneos en h; `prec_1h`, la lluvia de la hora anterior a h; `prec_3h`, la suma de h−2 a h (`NaN` si falta alguna). No usan nada posterior a t, y hay un test que lo comprueba.
+  - **Features en t** (con `h = t` truncada a la hora): `temp`, `humedad`, `viento` y `nubosidad` instantáneos en h; `prec_1h`, la lluvia de la hora anterior a h; `prec_3h`, la suma de h−2 a h (`NaN` si falta alguna); `llueve_1h`, 1 si `prec_1h` ≥ 0,1 mm, como alternativa binaria por si la cantidad es demasiado ruidosa (la ablación decide entre las dos). No usan nada posterior a t, y hay un test que lo comprueba.
   - **Contraste con AEMET 8416** (diario, periodo de desarrollo):
     - Temperatura fiable: correlación de 0,98–0,99, con 1 °C menos de media.
     - Lluvia ruidosa: correlación de Spearman de 0,57. Detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de sus días de lluvia no los confirma AEMET.
     - El caso extremo es la DANA del 29-10-2024: 105 mm frente a 1,3 mm. La celda de ~25 km incluye la zona donde llovió.
   - **Supuesto optimista:** el reanálisis se calcula días después de los hechos; en producción habría que usar observaciones en tiempo real.
+
+## Pendiente para el README
+- **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
 
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
