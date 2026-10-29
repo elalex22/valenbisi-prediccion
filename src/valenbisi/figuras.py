@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Paleta categórica por defecto, en orden fijo (azul, naranja, aguamarina): cada
 # modelo conserva su color en todas las figuras. Gris para las líneas de referencia.
-COLORES = {"persistencia": "#2a78d6", "frecuencia": "#eb6834", "lightgbm": "#1baf7a"}
+COLORES = {"persistencia": "#2a78d6", "frecuencia": "#eb6834", "libres": "#8a4fc7", "lightgbm": "#1baf7a"}
 GRIS, TEXTO, TEXTO_SUAVE = "#8f8e8a", "#0b0b0b", "#52514e"
 
 
