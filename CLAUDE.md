@@ -8,6 +8,12 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 - `valenbici-master/`: un zip por día (`DD-MM-YYYY.zip`). Cada zip trae CSV con `;` como separador, una foto de todas las estaciones cada 15 min. Periodo: 2022-12-01 a 2025-09-24. Hora Europe/Madrid.
   - **Cambio de esquema el 2023-05-22.** Antes: `number_, open, available, free, total, updated_at`. Después: `Numero, Activo, Bicis_disponibles, Espacios_libres, Espacios_totales, fecha_actualizacion`.
   - La fecha y hora de cada foto salen del nombre del CSV (`valenbici_DD-MM-YYYY_HH-MM-SS.csv`).
+- `valenbici-git/`: clon superficial (`git clone --depth 1`) de `github.com/ceferra/valenbici`, el repositorio de origen, que sigue actualizándose. No tiene licencia: se usa para analizar, pero los datos no se redistribuyen.
+  - Comprobado con `scripts/comprobar_clon.py`, que solo mira nombres, hashes, cabeceras y número de líneas:
+    - los 951 zips anteriores al 24-09-2025 y el propio 24-09-2025 son idénticos (SHA-256) a los de `valenbici-master`;
+    - los nuevos tienen la misma cabecera que después del 22-05-2023.
+  - **No hay ninguna foto del 25-09-2025 al 28-06-2026** (277 días). Los datos se reanudan el 29-06-2026 y están casi completos hasta el 28-10-2026.
+  - **En desarrollo solo se lee `valenbici-master`.** El clon solo lo lee el script final de la v2, filtrando por fecha.
 - `datos_tiempo/`: JSON diarios de AEMET (estación 8416 València) en latin-1. Los números vienen como texto con coma decimal y `prec="Ip"` significa precipitación inapreciable. Algunos ficheros contienen `404 datos expirados` (2020 y el segundo semestre de 2021); no afecta al periodo de las bicis.
 
 ## Decisiones aprobadas
@@ -129,6 +135,16 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - **Escenario secundario** (solo entrenamiento): LightGBM 0,695 / 0,472. Reentrenar con validación aporta +0,004 de AUC-PR [0,0035–0,0046] y +0,004 de Brier skill [0,0037–0,0046]: poco, pero siempre a favor.
   - Frente a validación (0,716 / 0,491), la prueba baja un poco (0,699 / 0,476). Es lo esperable: validación se usó para la parada temprana y para elegir, y es otra época del año.
   - **Calibración**: se queda corta, más que en validación, porque la prueba se llena más. Real ÷ predicho por mes, entre 1,01 y 1,07 (media 1,04). Por tramos, predice un 4,0 % donde la realidad es un 5,4 % y un 1,4 % donde es un 2,1 %. En la zona alta acierta (0,69 frente a 0,68). Encaja con el límite conocido de variabilidad entre periodos.
+
+## Versión 2 (en desarrollo)
+- **Reparto de la v2**: entrenamiento de dic-2022 a feb-2025, validación de mar a sep 2025 (la antigua prueba) y prueba v2 con los datos nuevos. Se mantiene el hueco de 60 min en cada frontera.
+- **Prueba v2: decisiones fijadas antes de mirarla** (aprobadas el 2026-10-29; la prueba v2 no se ha leído nunca):
+  - Periodo: `slot_utc` desde el **2025-09-25 00:00 hora local** hasta el **28-10-2026, último día completo** (hasta medianoche local del 29-10-2026). En la práctica, los datos van del 29-06-2026 al 28-10-2026.
+  - **Resultado principal**: con todas las filas de la prueba v2.
+  - **Resultado secundario**: excluyendo la primera semana (29-06 a 05-07-2026, hora local), en la que faltan los retardos de 24 h y 7 días porque no hay fotos anteriores.
+  - Las estaciones de la prueba v2 que no estaban en entrenamiento + validación se cuentan y se miden aparte.
+  - **La prueba v2 empieza 9 meses después de los últimos datos de entrenamiento.** Mide también la deriva, así que es esperable que baje respecto a la v1. Una bajada no implica por sí sola que la v2 sea peor que la v1: para eso se compara con el LightGBM v1 reentrenado con los mismos datos.
+  - El resto (modelo, variables, parámetros y referencias) se fijará en «Decisiones v2 congeladas», con la etiqueta git `v2-congelado`, antes de leer la prueba v2.
 
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
