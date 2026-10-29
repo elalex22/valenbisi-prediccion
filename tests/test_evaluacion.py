@@ -2,14 +2,17 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from valenbisi.evaluacion import (
     CONJUNTOS,
     FRONTERAS,
     evaluar,
     evaluar_por_tramos,
+    intervalos_bootstrap,
     limites,
     metricas,
+    remuestreo_por_dias,
     repartir,
     tabla_calibracion,
 )
@@ -132,3 +135,57 @@ def test_limites_leen_del_parquet_las_mismas_filas_que_repartir(tmp_path):
     for nombre in CONJUNTOS:
         leido = pd.read_parquet(tmp_path / "f.parquet", filters=limites(nombre) or None)
         assert leido["slot_utc"].tolist() == conjuntos[nombre]["slot_utc"].tolist(), nombre
+
+
+def datos_por_dias(n_dias: int = 30, filas_por_dia: int = 200, semilla: int = 0):
+    """y con ~10 % de positivos; ``bueno`` ordena bien y ``malo`` es ruido."""
+    rng = np.random.default_rng(semilla)
+    dias = np.repeat(pd.date_range("2025-03-01", periods=n_dias).strftime("%Y-%m-%d").to_numpy(), filas_por_dia)
+    y = rng.random(len(dias)) < 0.1
+    bueno = np.clip(np.where(y, 0.5, 0.05) + rng.normal(0, 0.1, len(y)), 0.001, 0.999)
+    malo = rng.random(len(y)) * 0.2
+    return y, {"bueno": bueno, "malo": malo}, dias
+
+
+def test_remuestreo_coge_dias_enteros():
+    # Días de tamaños distintos y filas desordenadas.
+    dias = np.array(["a"] * 3 + ["b"] * 5 + ["c"] * 2 + ["a"] * 1)
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        indices = remuestreo_por_dias(dias, rng)
+        tamano = {"a": 4, "b": 5, "c": 2}
+        cuenta = pd.Series(dias[indices]).value_counts()
+        # Cada día aparece un número entero de veces completo, y se sortean 3 días.
+        assert all(cuenta[d] % tamano[d] == 0 for d in cuenta.index)
+        assert sum(cuenta[d] // tamano[d] for d in cuenta.index) == 3
+        # Cada vez que un día entra, entran todas sus filas.
+        for d in cuenta.index:
+            filas = np.flatnonzero(dias == d)
+            assert all((indices == f).sum() == cuenta[d] // tamano[d] for f in filas)
+
+
+def test_bootstrap_es_reproducible_y_contiene_la_estimacion():
+    y, predicciones, dias = datos_por_dias()
+    a = intervalos_bootstrap(y, predicciones, dias, p_constante=0.1, n=50, semilla=3)
+    b = intervalos_bootstrap(y, predicciones, dias, p_constante=0.1, n=50, semilla=3)
+    c = intervalos_bootstrap(y, predicciones, dias, p_constante=0.1, n=50, semilla=4)
+    assert a == b
+    assert a != c
+
+    esperado = metricas(y, predicciones["bueno"], p_constante=0.1)
+    auc = a["bueno"]["auc_pr"]
+    assert auc["estimacion"] == esperado["auc_pr"]
+    assert a["bueno"]["brier_skill"]["estimacion"] == esperado["brier_skill"]
+    for modelo in predicciones:
+        for medida in a[modelo].values():
+            assert medida["inferior"] <= medida["estimacion"] <= medida["superior"]
+    assert auc["superior"] > auc["inferior"]
+
+
+def test_bootstrap_de_una_diferencia_clara_no_cruza_el_cero():
+    y, predicciones, dias = datos_por_dias()
+    r = intervalos_bootstrap(y, predicciones, dias, p_constante=0.1, diferencias=[("bueno", "malo")], n=50)
+    diferencia = r["bueno - malo"]["auc_pr"]
+    assert diferencia["estimacion"] == pytest.approx(r["bueno"]["auc_pr"]["estimacion"]
+                                                     - r["malo"]["auc_pr"]["estimacion"], abs=1e-4)
+    assert diferencia["inferior"] > 0
