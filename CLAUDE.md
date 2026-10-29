@@ -156,6 +156,14 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
     - El caso extremo es la DANA del 29-10-2024: 105 mm frente a 1,3 mm. La celda de ~25 km incluye la zona donde llovió.
   - **Supuesto optimista:** el reanálisis se calcula días después de los hechos; en producción habría que usar observaciones en tiempo real.
 
+- **Features candidatas de la v2** (`src/valenbisi/features_v2.py`, `vecinas.py`, `open_meteo.py`; `scripts/construir_features_v2.py` → `data/processed/valenbisi_features_v2.parquet`, 20.422.097 filas, 110 s, pico de 2,2 GB). Son 35: las 20 de la v1, cuyas columnas son idénticas a las del Parquet de la v1, más 15 nuevas:
+  - **Meteorología horaria** (7): `temp`, `humedad`, `viento`, `nubosidad`, `prec_1h`, `prec_3h` y `llueve_1h`. Sin `NaN`.
+  - **Vecinas** (4): las k=5 más cercanas por haversine, fijas, sobre la foto exacta de t. `vec_ocupacion`, `vec_frac_llenas`, `vec_libres_min` y `vec_delta_libres_60` (media de libres(t) − libres(t−60)). Las vecinas sin foto se ignoran. `NaN`: 0,007 % (1,1 % la delta).
+  - **Retardos alineados con la hora del objetivo** (4): `libres_obj_24h` = libres(t+60−24 h) = libres(t−23 h); `libres_obj_7d` = libres(t+60−7 d); y `cambio_24h` / `cambio_7d`, el cambio de libres de t−24 h a t+60−24 h (y lo mismo hace 7 días). Se calculan en UTC.
+    - `NaN`: 7,8 % / 8,8 % (24 h) y 9,5 % / 10,5 % (7 días). Siguen a los huecos de datos: 78 % en ago-2024 a 7 días, 41 % en jun-2024 (tras el hueco de feb–may) y 26 % en dic-2022 (sin datos anteriores). En la validación v2 (mar–sep 2025) son del 0,3–4 %.
+    - Aviso para la ablación: el `NaN` es más frecuente en entrenamiento que en validación, y se concentra cerca de los periodos congelados.
+  - Test de fuga sobre las 35: cambiar o borrar fotos de cualquier estación posteriores a t, o la meteorología posterior, no altera las features de t.
+
 ## Pendiente para el README
 - **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
 
