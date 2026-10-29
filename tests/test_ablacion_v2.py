@@ -116,3 +116,122 @@ def test_se_para_si_el_parquet_tiene_datos_de_la_prueba_v2(tmp_path, monkeypatch
                                       "--predicciones", str(tmp_path / "p"), "--minimo-libre-gb", "0"])
     with pytest.raises(ValueError, match="prueba v2"):
         m.main()
+
+
+def test_clave_exige_mismas_columnas_en_orden_semilla_parametros_y_parada():
+    m = cargar()
+    base = m.clave(["a", "b"], 42, {"lr": 0.05}, 3000, 100)
+    assert base == m.clave(["a", "b"], 42, {"lr": 0.05}, 3000, 100)
+    assert base != m.clave(["b", "a"], 42, {"lr": 0.05}, 3000, 100)
+    assert base != m.clave(["a", "b"], 43, {"lr": 0.05}, 3000, 100)
+    assert base != m.clave(["a", "b"], 42, {"lr": 0.1}, 3000, 100)
+    assert base != m.clave(["a", "b"], 42, {"lr": 0.05}, 2000, 100)
+    assert base != m.clave(["a", "b"], 42, {"lr": 0.05}, 3000, 50)
+
+
+def test_indice_de_previas_marca_la_parada_asumida_y_salta_simulaciones():
+    m = cargar()
+    previo = {"parametros": {"lr": 0.05}, "variantes": {
+        "A0": {"features": ["a"], "semilla": 42},                                    # resumen antiguo
+        "A4": {"features": ["a", "r"], "semilla": 42, "parametros": {"lr": 0.05}, "max_arboles": 3000,
+               "paciencia": 100},
+        "A4_sin_7d": {"simulacion": "sin_7d", "de": "A4"},
+    }}
+    indice = m.indice_previas(previo)
+    assert indice[m.clave(["a"], 42, {"lr": 0.05}, 3000, 100)] == ("A0", True)
+    assert indice[m.clave(["a", "r"], 42, {"lr": 0.05}, 3000, 100)] == ("A4", False)
+    assert len(indice) == 2
+
+
+def preparar(m, tmp_path, monkeypatch, reanudar: bool, contador: list):
+    ruta = tmp_path / "features_v2.parquet"
+    if not ruta.exists():
+        parquet_sintetico(ruta)
+    monkeypatch.setattr(m, "PARAMETROS", {**m.PARAMETROS, "min_data_in_leaf": 20, "num_threads": 2})
+    monkeypatch.setattr(m, "MAX_ARBOLES", 20)
+    monkeypatch.setattr(m, "REPLICAS", 5)
+    monkeypatch.setattr(m, "acepta", lambda diferencia, ruido: True)
+    entrenar_real = m.entrenar
+
+    def contar(*args, **kwargs):
+        contador.append(1)
+        return entrenar_real(*args, **kwargs)
+    monkeypatch.setattr(m, "entrenar", contar)
+    argv = ["ablacion_v2.py", "--features", str(ruta), "--salida", str(tmp_path / "resumen.json"),
+            "--predicciones", str(tmp_path / "pred"), "--minimo-libre-gb", "0", *(["--reanudar"] if reanudar else [])]
+    monkeypatch.setattr(sys, "argv", argv)
+
+
+def test_reanudar_reutiliza_todo_lo_identico_y_da_las_mismas_decisiones(tmp_path, monkeypatch):
+    primera, segunda = [], []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=False, contador=primera)
+    m.main()
+    antes = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+    assert primera and antes["reutilizadas"] == {}
+
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=segunda)
+    m.main()
+    despues = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+
+    assert segunda == []                                              # no se entrena nada
+    entrenadas = {n for n, v in despues["variantes"].items() if "features" in v}
+    assert set(despues["reutilizadas"]) == entrenadas
+    assert all(not nota["parada_asumida"] for nota in despues["reutilizadas"].values())
+    assert despues["decisiones"]["grupos_finales"] == antes["decisiones"]["grupos_finales"]
+    # «A5 sin un grupo» tiene las mismas columnas y semilla que A3 o A4: se reutiliza de ellas.
+    candidatos = despues["decisiones"]["etapa_2_candidatos"]
+    origenes = {despues["reutilizadas"][f"A5_sin_{g}"]["reutilizada_de"] for g in candidatos}
+    assert origenes <= {"A1", "A2", "A3", "A4"}
+    for nombre in entrenadas:
+        assert despues["variantes"][nombre]["validacion"]["todas"]["logloss"] == pytest.approx(
+            antes["variantes"][nombre]["validacion"]["todas"]["logloss"], abs=1e-6)
+
+
+def test_reanudar_vuelve_a_entrenar_si_cambian_los_parametros_o_falta_la_prediccion(tmp_path, monkeypatch):
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=False, contador=[])
+    m.main()
+
+    # Falta la predicción de A3: se reentrena solo esa (y las que dependan de columnas nuevas).
+    (tmp_path / "pred" / "A3.npy").unlink()
+    contador = []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=contador)
+    m.main()
+    r = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+    assert "A3" not in r["reutilizadas"] and "A0" in r["reutilizadas"]
+    assert len(contador) >= 1
+
+    # Otros parámetros: no se reutiliza nada.
+    contador = []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=contador)
+    monkeypatch.setattr(m, "PARAMETROS", {**m.PARAMETROS, "learning_rate": 0.1})
+    m.main()
+    r = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+    assert r["reutilizadas"] == {}
+    assert len(contador) == sum(1 for v in r["variantes"].values() if "features" in v)
+
+
+def test_reanudar_un_resumen_sin_parada_registrada_lo_indica(tmp_path, monkeypatch):
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=False, contador=[])
+    m.main()
+    # Se imita el primer resumen real: sin parámetros ni parada por variante.
+    ruta = tmp_path / "resumen.json"
+    r = json.loads(ruta.read_text(encoding="utf-8"))
+    for v in r["variantes"].values():
+        for k in ("parametros", "max_arboles", "paciencia"):
+            v.pop(k, None)
+    ruta.write_text(json.dumps(r), encoding="utf-8")
+
+    contador = []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=contador)
+    monkeypatch.setattr(m, "PARADA_SIN_REGISTRAR", {"max_arboles": 20, "paciencia": m.PACIENCIA})
+    m.main()
+    despues = json.loads(ruta.read_text(encoding="utf-8"))
+    assert contador == []
+    assert all(nota["parada_asumida"] for nota in despues["reutilizadas"].values())

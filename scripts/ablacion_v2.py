@@ -28,8 +28,13 @@ Guarda las predicciones de validación (float32) en data/processed/ablacion_v2/
 y data/processed/resumen_ablacion_v2.json, actualizado tras cada paso. Vigila
 la RAM y evita la suspensión.
 
+Con --reanudar, reutiliza del resumen anterior los entrenamientos idénticos
+(mismas columnas en el mismo orden, semilla, parámetros y parada temprana) en
+vez de repetirlos; el resumen dice cuáles («reutilizadas»). Las comparaciones
+se recalculan siempre.
+
 Uso (desde la raíz del proyecto):
-    .venv\\Scripts\\python scripts\\ablacion_v2.py
+    .venv\\Scripts\\python scripts\\ablacion_v2.py [--reanudar]
 """
 
 import argparse
@@ -50,6 +55,7 @@ from valenbisi.features_v2 import FEATURES_RETARDOS, FEATURES_V2
 from valenbisi.memoria import comprobar_memoria, evitar_suspension, memoria_libre_gb, memoria_proceso_gb
 from valenbisi.modelo import (
     FEATURES_MODELO,
+    PACIENCIA,
     PARAMETROS,
     SecuenciaParquet,
     dataset_por_lotes,
@@ -70,6 +76,7 @@ ETAPA_1 = {"A0": ([], 42), "A0b": ([], 43), "A1": (["meteo_cantidad"], 42), "A2"
            "A3": (["vecinas"], 42), "A4": (["retardos"], 42)}
 VARIANTE_DE_GRUPO = {"meteo_cantidad": "A1", "meteo_binaria": "A2", "vecinas": "A3", "retardos": "A4"}
 RETARDOS_7D = ["libres_obj_7d", "cambio_7d"]
+ESCENARIOS_SIMULACION = {"sin_7d": RETARDOS_7D, "sin_retardos": FEATURES_RETARDOS}
 REPLICAS = 200
 MAX_ARBOLES = 3000
 
@@ -103,6 +110,36 @@ def columnas(grupos: list[str]) -> list[str]:
     return [c for c in FEATURES_V2 if c in elegidas]
 
 
+# ---------- Reanudar (funciones puras, con tests) ----------
+
+# El primer resumen (commit 96718a0) registra los PARAMETROS de LightGBM, pero no
+# el tope de árboles ni la paciencia de la parada temprana, que estaban fijos en
+# el código de ese commit. Para sus variantes se toman de ahí, y se indica.
+PARADA_SIN_REGISTRAR = {"max_arboles": 3000, "paciencia": 100}
+
+
+def clave(features: list[str], semilla: int, parametros: dict, max_arboles: int, paciencia: int) -> str:
+    """Identifica un entrenamiento: columnas (en orden), semilla, parámetros y parada temprana."""
+    return json.dumps([list(features), semilla, parametros, max_arboles, paciencia], sort_keys=True)
+
+
+def indice_previas(resumen: dict) -> dict[str, tuple[str, bool]]:
+    """{clave: (variante, parada_asumida)} de las variantes entrenadas de un resumen anterior.
+
+    Las simulaciones no se indexan: se reutilizan junto con su modelo.
+    """
+    indice = {}
+    for nombre, v in resumen.get("variantes", {}).items():
+        if "features" not in v:
+            continue
+        asumida = "max_arboles" not in v or "paciencia" not in v
+        k = clave(v["features"], v["semilla"], v.get("parametros", resumen["parametros"]),
+                  v.get("max_arboles", PARADA_SIN_REGISTRAR["max_arboles"]),
+                  v.get("paciencia", PARADA_SIN_REGISTRAR["paciencia"]))
+        indice.setdefault(k, (nombre, asumida))
+    return indice
+
+
 # ---------- Ejecución ----------
 
 def memoria() -> str:
@@ -131,10 +168,17 @@ class Ablacion:
         }
         self.p_constante = float(self.y_ent.mean())
         self.predicciones: dict[str, np.ndarray] = {}
+        # Con --reanudar, el resumen anterior se lee antes de sobrescribirlo.
+        self.previo = (json.loads(args.salida.read_text(encoding="utf-8"))
+                       if args.reanudar and args.salida.exists() else {})
+        self.previas = indice_previas(self.previo) if self.previo else {}
         self.resumen = {"filas": {"entrenamiento": len(self.y_ent), "validacion": len(self.y_val)},
                         "subgrupos_filas": {k: int(v.sum()) for k, v in self.subgrupos.items()},
-                        "parametros": PARAMETROS, "variantes": {}, "comparaciones": {}, "decisiones": {}}
+                        "parametros": PARAMETROS, "variantes": {}, "reutilizadas": {}, "comparaciones": {},
+                        "decisiones": {}}
         args.predicciones.mkdir(parents=True, exist_ok=True)
+        if args.reanudar:
+            print(f"Reanudando: {len(self.previas)} entrenamientos anteriores reutilizables", flush=True)
         filas = f"Entrenamiento {len(self.y_ent):,} filas, validación {len(self.y_val):,}".replace(",", ".")
         print(f"{filas} ({memoria()})", flush=True)
 
@@ -151,8 +195,41 @@ class Ablacion:
             salida[nombre] = m
         return salida
 
+    def reutilizar(self, nombre: str, cols: list[str], semilla: int, simular_retardos: bool) -> bool:
+        """Carga un entrenamiento anterior idéntico (columnas en orden, semilla, parámetros y parada).
+
+        Solo si están sus predicciones y, si hacen falta, las de sus simulaciones.
+        """
+        previa = self.previas.get(clave(cols, semilla, PARAMETROS, MAX_ARBOLES, PACIENCIA))
+        if previa is None:
+            return False
+        origen, asumida = previa
+        nombres = [origen, *([f"{origen}_{e}" for e in ESCENARIOS_SIMULACION] if simular_retardos else [])]
+        rutas = [self.args.predicciones / f"{n}.npy" for n in nombres]
+        if not all(r.exists() for r in rutas) or not all(n in self.previo["variantes"] for n in nombres):
+            return False
+        cargadas = [np.load(r).astype("float64") for r in rutas]
+        if any(len(p) != len(self.y_val) for p in cargadas):
+            return False
+        nota = {"reutilizada_de": origen, "parada_asumida": asumida}
+        anterior = {k: v for k, v in self.previo["variantes"][origen].items() if k not in ("validacion", *nota)}
+        self.registrar(nombre, cargadas[0], {**anterior, **nota})
+        for escenario, p in zip(ESCENARIOS_SIMULACION, cargadas[1:]):
+            simulacion = self.previo["variantes"][f"{origen}_{escenario}"]
+            self.registrar(f"{nombre}_{escenario}", p, {**{k: v for k, v in simulacion.items() if k != "validacion"},
+                                                         "de": nombre, **nota})
+        self.resumen["reutilizadas"][nombre] = nota
+        self.guardar()
+        logloss = self.resumen["variantes"][nombre]["validacion"]["todas"]["logloss"]
+        print(f"\n== {nombre}: reutilizada de {origen}"
+              f"{' (parada sin registrar: 3000 árboles y paciencia 100 del commit 96718a0)' if asumida else ''}; "
+              f"logloss {logloss:.6f} ==", flush=True)
+        return True
+
     def variante(self, nombre: str, grupos: list[str], semilla: int, simular_retardos: bool = False) -> None:
         cols = columnas(grupos)
+        if self.reutilizar(nombre, cols, semilla, simular_retardos):
+            return
         comprobar_memoria(self.args.minimo_libre_gb)
         print(f"\n== {nombre}: {len(cols)} features ({', '.join(grupos) or 'base'}), semilla {semilla} ==", flush=True)
         inicio = time.monotonic()
@@ -162,15 +239,16 @@ class Ablacion:
         d_val = dataset_por_lotes(s_val, self.y_val, referencia=d_ent)
         print(f"  datos listos en {time.monotonic() - inicio:.0f} s ({memoria()})", flush=True)
         modelo = entrenar(d_ent, d_val, {**PARAMETROS, "seed": semilla}, max_arboles=MAX_ARBOLES,
-                          callbacks=[vigilar_memoria(self.args.minimo_libre_gb)], registro=500)
+                          paciencia=PACIENCIA, callbacks=[vigilar_memoria(self.args.minimo_libre_gb)], registro=500)
         segundos = time.monotonic() - inicio
         del d_ent, d_val
         gc.collect()
         p = predecir_por_lotes(modelo, s_val, num_iteration=modelo.best_iteration)
-        self.registrar(nombre, p, {"grupos": grupos, "features": cols, "semilla": semilla,
+        self.registrar(nombre, p, {"grupos": grupos, "features": cols, "semilla": semilla, "parametros": PARAMETROS,
+                                   "max_arboles": MAX_ARBOLES, "paciencia": PACIENCIA,
                                    "arboles": modelo.best_iteration, "segundos_entrenamiento": round(segundos)})
         if simular_retardos:
-            for escenario, vaciar in (("sin_7d", RETARDOS_7D), ("sin_retardos", FEATURES_RETARDOS)):
+            for escenario, vaciar in ESCENARIOS_SIMULACION.items():
                 indices = [cols.index(c) for c in vaciar]
                 partes = []
                 for X in s_val.bloques():
@@ -216,6 +294,9 @@ def main() -> None:
     parser.add_argument("--predicciones", type=Path, default=RAIZ / "data" / "processed" / "ablacion_v2")
     parser.add_argument("--minimo-libre-gb", type=float, default=1.5,
                         help="RAM libre del equipo por debajo de la cual el script se para")
+    parser.add_argument("--reanudar", action="store_true",
+                        help="reutiliza los entrenamientos del resumen anterior idénticos en columnas (y su orden), "
+                             "semilla, parámetros y parada temprana")
     args = parser.parse_args()
     evitar_suspension()
     inicio = time.monotonic()
