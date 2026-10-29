@@ -10,6 +10,7 @@ from valenbisi.modelo import (
     GRUPOS_MODELO,
     dataset,
     entrenar,
+    entrenar_fijo,
     importancia_permutacion,
     matriz,
 )
@@ -67,3 +68,18 @@ def test_sin_pesos_las_probabilidades_salen_calibradas():
     _, caidas = importancia_permutacion(modelo.predict, X_val, y_val, {"senal": [0], "ruido": [1]})
     assert caidas["senal"] > 0.1
     assert abs(caidas["ruido"]) < 0.02
+
+
+def test_entrenar_fijo_hace_justo_los_arboles_pedidos_sin_mirar_validacion():
+    X, y = datos(20_000, 0)
+    parametros = {"objective": "binary", "learning_rate": 0.1, "num_leaves": 7, "min_data_in_leaf": 100,
+                  "num_threads": 2, "seed": 0, "verbose": -1}
+    modelo = entrenar_fijo(dataset(X, y, COLUMNAS), arboles=37, parametros=parametros)
+
+    assert modelo.num_trees() == 37
+    assert modelo.best_iteration == 0  # sin parada temprana: no hay «mejor» iteración
+    # Mismos datos y semilla, mismo modelo: el reentrenamiento final es reproducible.
+    otro = entrenar_fijo(dataset(X, y, COLUMNAS), arboles=37, parametros=parametros)
+    assert np.array_equal(modelo.predict(X), otro.predict(X))
+    p = modelo.predict(X)
+    assert p[X[:, 0] == 1].mean() == pytest.approx(0.4, abs=0.03)

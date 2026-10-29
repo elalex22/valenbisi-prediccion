@@ -98,6 +98,17 @@ def entrenar(entrenamiento: lgb.Dataset, validacion: lgb.Dataset, parametros: di
     )
 
 
+def entrenar_fijo(entrenamiento: lgb.Dataset, arboles: int, parametros: dict = PARAMETROS,
+                  callbacks: list | None = None) -> lgb.Booster:
+    """Entrena exactamente ``arboles`` árboles, sin conjunto de validación ni parada temprana.
+
+    Para el modelo final: el número de árboles se fija antes con la parada
+    temprana en validación, y luego se reentrena con más datos sin volver a mirar
+    ningún conjunto de evaluación.
+    """
+    return lgb.train(parametros, entrenamiento, num_boost_round=arboles, callbacks=callbacks)
+
+
 def importancia_permutacion(
     predecir: Callable[[np.ndarray], np.ndarray], X: np.ndarray, y: np.ndarray,
     grupos: dict[str, list[int]], semilla: int = 0,
