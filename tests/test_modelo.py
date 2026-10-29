@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from valenbisi.features import FEATURES
@@ -8,11 +9,14 @@ from valenbisi.modelo import (
     FEATURES_MODELO,
     GRUPOS,
     GRUPOS_MODELO,
+    SecuenciaParquet,
     dataset,
+    dataset_por_lotes,
     entrenar,
     entrenar_fijo,
     importancia_permutacion,
     matriz,
+    predecir_por_lotes,
 )
 
 COLUMNAS = ["senal", "ruido", "estacion"]
@@ -83,3 +87,55 @@ def test_entrenar_fijo_hace_justo_los_arboles_pedidos_sin_mirar_validacion():
     assert np.array_equal(modelo.predict(X), otro.predict(X))
     p = modelo.predict(X)
     assert p[X[:, 0] == 1].mean() == pytest.approx(0.4, abs=0.03)
+
+
+def parquet_por_bloques(tmp_path, n: int = 6_000, filas_por_bloque: int = 1_000):
+    """Parquet con varios bloques: slot_utc creciente, tres columnas y la etiqueta."""
+    X, y = datos(n, 7)
+    df = pd.DataFrame({"slot_utc": pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC"),
+                       "senal": X[:, 0], "ruido": X[:, 1], "estacion": X[:, 2].astype("int16"), "llena_60": y})
+    ruta = tmp_path / "f.parquet"
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), ruta, row_group_size=filas_por_bloque)
+    return ruta, df
+
+
+def test_secuencia_lee_las_filas_filtradas_en_orden(tmp_path):
+    ruta, df = parquet_por_bloques(tmp_path)
+    desde, hasta = df["slot_utc"].iloc[1_500], df["slot_utc"].iloc[4_200]
+    secuencia = SecuenciaParquet(ruta, COLUMNAS, [("slot_utc", ">=", desde), ("slot_utc", "<", hasta)], batch_size=700)
+    esperado = df.iloc[1_500:4_200]
+
+    assert len(secuencia) == 2_700
+    X = esperado[COLUMNAS].to_numpy(dtype="float32")
+    assert np.array_equal(secuencia[0:2_700], X)                 # tramo que cruza varios bloques
+    assert np.array_equal(secuencia[1_234], X[1_234])            # una fila suelta
+    assert np.array_equal(secuencia[490:510], X[490:510])        # justo en el cambio de bloque
+    assert np.array_equal(np.concatenate(list(secuencia.bloques())), X)
+    assert secuencia.leer(["llena_60"])["llena_60"].tolist() == esperado["llena_60"].tolist()
+
+
+def test_dataset_por_lotes_da_el_mismo_modelo_que_la_matriz(tmp_path):
+    ruta, df = parquet_por_bloques(tmp_path)
+    corte = df["slot_utc"].iloc[4_000]
+    parametros = {"objective": "binary", "learning_rate": 0.1, "num_leaves": 7, "min_data_in_leaf": 50,
+                  "num_threads": 2, "seed": 0, "verbose": -1}
+    entrenamiento = df[df["slot_utc"] < corte]
+    validacion = df[df["slot_utc"] >= corte]
+
+    # Con la matriz entera en memoria.
+    d = dataset(entrenamiento[COLUMNAS].to_numpy("float32"), entrenamiento["llena_60"].to_numpy(), COLUMNAS)
+    v = dataset(validacion[COLUMNAS].to_numpy("float32"), validacion["llena_60"].to_numpy(), COLUMNAS, referencia=d)
+    con_matriz = entrenar(d, v, parametros, max_arboles=60, paciencia=10, registro=0)
+
+    # Por lotes.
+    s_ent = SecuenciaParquet(ruta, COLUMNAS, [("slot_utc", "<", corte)], batch_size=333)
+    s_val = SecuenciaParquet(ruta, COLUMNAS, [("slot_utc", ">=", corte)], batch_size=333)
+    d2 = dataset_por_lotes(s_ent, s_ent.leer(["llena_60"])["llena_60"].to_numpy())
+    v2 = dataset_por_lotes(s_val, s_val.leer(["llena_60"])["llena_60"].to_numpy(), referencia=d2)
+    por_lotes = entrenar(d2, v2, parametros, max_arboles=60, paciencia=10, registro=0)
+
+    assert por_lotes.best_iteration == con_matriz.best_iteration
+    esperado = con_matriz.predict(validacion[COLUMNAS].to_numpy("float32"), num_iteration=con_matriz.best_iteration)
+    obtenido = predecir_por_lotes(por_lotes, s_val, num_iteration=por_lotes.best_iteration)
+    assert len(obtenido) == len(validacion)
+    assert np.allclose(obtenido, esperado, rtol=0, atol=1e-12)

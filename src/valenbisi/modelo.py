@@ -10,7 +10,10 @@ from collections.abc import Callable
 
 import lightgbm as lgb
 import numpy as np
+import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from sklearn.metrics import average_precision_score
 
 from valenbisi.features import CATEGORICAS, FEATURES, RETARDOS_MIN
@@ -76,6 +79,94 @@ def dataset(X: np.ndarray, y: np.ndarray, columnas: list[str] = FEATURES_MODELO,
         reference=referencia, free_raw_data=True, params={"max_bin": PARAMETROS["max_bin"], "verbose": -1},
     )
     return datos.construct()
+
+
+_COMPARACIONES = {">=": pc.greater_equal, ">": pc.greater, "<": pc.less, "<=": pc.less_equal, "==": pc.equal}
+
+
+class SecuenciaParquet(lgb.Sequence):
+    """Las filas de un Parquet que cumplen ``filtros``, leídas por bloques (row groups) como matriz float32.
+
+    Sirve para construir el Dataset de LightGBM sin tener la matriz entera en
+    memoria: con 35 columnas y 15 M filas serían 2,1 GB. Se guarda solo el último
+    bloque leído; LightGBM recorre las filas en orden, así que cada bloque se lee
+    una vez por pasada. ``filtros`` son condiciones (columna, operador, valor)
+    unidas con «y», como las de :func:`valenbisi.evaluacion.limites`.
+    """
+
+    def __init__(self, ruta, columnas: list[str], filtros: list[tuple], batch_size: int = 100_000):
+        self.archivo = pq.ParquetFile(ruta)
+        self.columnas = list(columnas)
+        self.batch_size = batch_size
+        usadas = sorted({c for c, _, _ in filtros}) or [self.archivo.schema_arrow.names[0]]
+        self.filas_bloque = []
+        for g in range(self.archivo.num_row_groups):
+            tabla = self.archivo.read_row_group(g, columns=usadas)
+            mascara = pa.array(np.ones(tabla.num_rows, dtype=bool))
+            for columna, operador, valor in filtros:
+                mascara = pc.and_(mascara, _COMPARACIONES[operador](tabla.column(columna), pa.scalar(valor)))
+            self.filas_bloque.append(np.flatnonzero(mascara.to_numpy(zero_copy_only=False)))
+        self.fin = np.cumsum([len(f) for f in self.filas_bloque])
+        self.inicio = self.fin - [len(f) for f in self.filas_bloque]
+        self._cache: tuple[int, np.ndarray] | None = None
+
+    def __len__(self) -> int:
+        return int(self.fin[-1]) if len(self.fin) else 0
+
+    def _tabla(self, g: int, columnas: list[str]) -> pa.Table:
+        return self.archivo.read_row_group(g, columns=columnas).take(self.filas_bloque[g])
+
+    def bloque(self, g: int) -> np.ndarray:
+        if self._cache is None or self._cache[0] != g:
+            self._cache = (g, matriz(self._tabla(g, self.columnas), self.columnas))
+        return self._cache[1]
+
+    def bloques(self):
+        """Las matrices de cada bloque, en orden (para predecir sin cargarlo todo)."""
+        for g in range(len(self.filas_bloque)):
+            if len(self.filas_bloque[g]):
+                yield self.bloque(g)
+
+    def leer(self, columnas: list[str]) -> pd.DataFrame:
+        """Otras columnas de las mismas filas y en el mismo orden (etiqueta, slot_utc, libres…)."""
+        partes = [self._tabla(g, columnas).to_pandas() for g in range(len(self.filas_bloque))]
+        return pd.concat(partes, ignore_index=True)
+
+    def __getitem__(self, indice):
+        if isinstance(indice, slice):
+            inicio, fin, paso = indice.indices(len(self))
+            if paso != 1:
+                raise ValueError("Solo se admiten tramos consecutivos")
+            partes, i = [], inicio
+            while i < fin:
+                g = int(np.searchsorted(self.fin, i, side="right"))
+                hasta = min(fin, int(self.fin[g]))
+                partes.append(self.bloque(g)[i - self.inicio[g]:hasta - self.inicio[g]])
+                i = hasta
+            return np.concatenate(partes) if partes else np.empty((0, len(self.columnas)), dtype=np.float32)
+        # Fila suelta: LightGBM la usa para muestrear los cortes y la exige en float64 (conversión exacta).
+        indice = int(indice)
+        g = int(np.searchsorted(self.fin, indice, side="right"))
+        return self.bloque(g)[indice - self.inicio[g]].astype(np.float64)
+
+
+def dataset_por_lotes(secuencia: SecuenciaParquet, y: np.ndarray,
+                      referencia: lgb.Dataset | None = None) -> lgb.Dataset:
+    """Como :func:`dataset`, pero leyendo las filas de ``secuencia`` por bloques."""
+    datos = lgb.Dataset(
+        [secuencia], label=y, feature_name=secuencia.columnas,
+        categorical_feature=[c for c in CATEGORICAS if c in secuencia.columnas],
+        reference=referencia, params={"max_bin": PARAMETROS["max_bin"], "verbose": -1},
+    )
+    return datos.construct()
+
+
+def predecir_por_lotes(modelo: lgb.Booster, secuencia: SecuenciaParquet,
+                       num_iteration: int | None = None) -> np.ndarray:
+    """Probabilidades de todas las filas de ``secuencia``, bloque a bloque (con ``num_iteration`` árboles)."""
+    partes = [modelo.predict(X, num_iteration=num_iteration, num_threads=PARAMETROS["num_threads"])
+              for X in secuencia.bloques()]
+    return np.concatenate(partes) if partes else np.empty(0)
 
 
 def vigilar_memoria(minimo_libre_gb: float, cada: int = 25) -> Callable:
