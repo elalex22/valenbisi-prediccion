@@ -89,3 +89,11 @@ def test_conserva_el_indice_de_las_filas():
     t = slots("2024-03-31 01:00", "2024-03-31 02:00")
     t.index = [10, 20]
     assert tiempo_hora_pasada(t, horario()).index.tolist() == [10, 20]
+
+
+def test_llueve_1h_es_binaria_con_umbral_y_conserva_los_huecos():
+    h = horario(4)
+    h["prec_1h"] = np.array([0.0, 0.05, 0.1, np.nan], dtype="float32")
+    df = tiempo_hora_pasada(slots("2024-03-31 00:10", "2024-03-31 01:10", "2024-03-31 02:10", "2024-03-31 03:10"), h)
+    assert df["llueve_1h"].iloc[:3].tolist() == [0.0, 0.0, 1.0]   # 0,05 mm no llega al umbral; 0,1 sí
+    assert np.isnan(df["llueve_1h"].iloc[3])

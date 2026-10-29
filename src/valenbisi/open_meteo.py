@@ -35,7 +35,9 @@ VARIABLES = {
     "precipitation": "prec_1h",
 }
 HORAS_PREC_3H = 3
-FEATURES_METEO = ["temp", "humedad", "viento", "nubosidad", "prec_1h", "prec_3h"]
+# La lluvia del reanálisis es ruidosa en cantidad; «ha llovido algo» puede ser más robusto.
+UMBRAL_LLUVIA_MM = 0.1
+FEATURES_METEO = ["temp", "humedad", "viento", "nubosidad", "prec_1h", "prec_3h", "llueve_1h"]
 
 
 def url_archivo(inicio: date, fin: date, latitud: float = LATITUD, longitud: float = LONGITUD) -> str:
@@ -76,6 +78,8 @@ def tiempo_hora_pasada(slot_utc: pd.Series, horario: pd.DataFrame) -> pd.DataFra
     - ``prec_1h``: lluvia de la hora anterior a h.
     - ``prec_3h``: lluvia de las 3 horas anteriores a h (h−2, h−1 y h). Si falta
       alguna de las tres, queda NaN: nunca se rellena.
+    - ``llueve_1h``: 1 si ``prec_1h`` ≥ ``UMBRAL_LLUVIA_MM``, 0 si no (NaN si falta).
+      La ablación decide entre la cantidad y esta versión binaria.
     Si no hay dato para h, todo queda NaN.
     """
     por_hora = horario.set_index("hora_utc")
@@ -84,6 +88,7 @@ def tiempo_hora_pasada(slot_utc: pd.Series, horario: pd.DataFrame) -> pd.DataFra
     completa = prec.reindex(pd.date_range(prec.index.min(), prec.index.max(), freq="h"))
     prec_3h = completa.rolling(HORAS_PREC_3H, min_periods=HORAS_PREC_3H).sum()
     tabla = por_hora[["temp", "humedad", "viento", "nubosidad", "prec_1h"]].join(prec_3h.rename("prec_3h"))
+    tabla["llueve_1h"] = (tabla["prec_1h"] >= UMBRAL_LLUVIA_MM).astype("float32").where(tabla["prec_1h"].notna())
 
     h = pd.DatetimeIndex(slot_utc).floor("h")
     salida = tabla.reindex(h)[FEATURES_METEO].astype("float32")
