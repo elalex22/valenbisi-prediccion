@@ -8,7 +8,7 @@ hueco, las últimas filas de un conjunto tendrían su etiqueta en el siguiente.
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, brier_score_loss
+from sklearn.metrics import average_precision_score, brier_score_loss, log_loss
 
 from valenbisi.objetivo import HORIZONTE
 
@@ -19,6 +19,12 @@ FRONTERAS = {
     "prueba": pd.Timestamp("2025-03-01", tz=ZONA).tz_convert("UTC"),
 }
 CONJUNTOS = ("entrenamiento", *FRONTERAS)
+# Reparto de la v2: la antigua prueba pasa a ser validación, y la prueba v2 son los
+# datos nuevos del clon (desde el 25-09-2025, ver CLAUDE.md).
+FRONTERAS_V2 = {
+    "validacion": pd.Timestamp("2025-03-01", tz=ZONA).tz_convert("UTC"),
+    "prueba": pd.Timestamp("2025-09-25", tz=ZONA).tz_convert("UTC"),
+}
 
 
 def repartir(df: pd.DataFrame, fronteras: dict[str, pd.Timestamp] = FRONTERAS) -> tuple[dict[str, pd.DataFrame], dict]:
@@ -142,28 +148,39 @@ def remuestreo_por_dias(dias: np.ndarray, rng: np.random.Generator) -> np.ndarra
 def intervalos_bootstrap(
     y: np.ndarray, predicciones: dict[str, np.ndarray], dias: np.ndarray, p_constante: float,
     diferencias: list[tuple[str, str]] = (), n: int = 200, semilla: int = 0, nivel: float = 0.95,
+    medidas: tuple[str, ...] = ("auc_pr", "brier_skill"), decimales: int = 4,
 ) -> dict:
-    """Intervalos de confianza de la AUC-PR y el Brier skill, con bootstrap por días.
+    """Intervalos de confianza de ``medidas`` (AUC-PR, Brier skill y/o logloss), con bootstrap por días.
 
     Las filas de un mismo día no son independientes (las mismas estaciones, el
     mismo tiempo, el mismo evento), así que se remuestrean días enteros: con filas
     sueltas los intervalos saldrían demasiado estrechos. ``diferencias`` son pares
     (a, b) de modelos de los que se quiere el intervalo de a − b, calculado en las
-    mismas réplicas.
+    mismas réplicas. La logloss es «menos es mejor»: una diferencia negativa
+    significa que a mejora a b. Solo se calculan las ``medidas`` pedidas: la
+    AUC-PR es la más cara (ordena todas las filas en cada réplica).
     """
     y = np.asarray(y, dtype=bool)
+    calculos = {
+        "auc_pr": lambda y_r, p_r, brier_constante: average_precision_score(y_r, p_r),
+        "brier_skill": lambda y_r, p_r, brier_constante: 1 - brier_score_loss(y_r, p_r) / brier_constante,
+        "logloss": lambda y_r, p_r, brier_constante: log_loss(y_r, p_r, labels=[False, True]),
+    }
+    desconocidas = set(medidas) - set(calculos)
+    if desconocidas:
+        raise ValueError(f"Medidas desconocidas: {sorted(desconocidas)}")
 
     def medir(indices: np.ndarray) -> dict[str, dict[str, float]]:
         y_r = y[indices]
-        brier_constante = brier_score_loss(y_r, np.full(len(y_r), p_constante))
-        return {m: {"auc_pr": average_precision_score(y_r, p[indices]),
-                    "brier_skill": 1 - brier_score_loss(y_r, p[indices]) / brier_constante}
+        brier_constante = (brier_score_loss(y_r, np.full(len(y_r), p_constante))
+                           if "brier_skill" in medidas else None)
+        return {m: {k: calculos[k](y_r, p[indices], brier_constante) for k in medidas}
                 for m, p in predicciones.items()}
 
-    def con_diferencias(medidas: dict) -> dict:
+    def con_diferencias(valores: dict) -> dict:
         for a, b in diferencias:
-            medidas[f"{a} - {b}"] = {k: medidas[a][k] - medidas[b][k] for k in ("auc_pr", "brier_skill")}
-        return medidas
+            valores[f"{a} - {b}"] = {k: valores[a][k] - valores[b][k] for k in medidas}
+        return valores
 
     estimacion = con_diferencias(medir(np.arange(len(y))))
     rng = np.random.default_rng(semilla)
@@ -176,8 +193,9 @@ def intervalos_bootstrap(
         for metrica, valor in valores.items():
             muestra = np.array([r[nombre][metrica] for r in replicas])
             inferior, superior = np.quantile(muestra, [cola, 1 - cola])
-            resultado[nombre][metrica] = {"estimacion": round(float(valor), 4),
-                                          "inferior": round(float(inferior), 4), "superior": round(float(superior), 4)}
+            resultado[nombre][metrica] = {"estimacion": round(float(valor), decimales),
+                                          "inferior": round(float(inferior), decimales),
+                                          "superior": round(float(superior), decimales)}
     return resultado
 
 

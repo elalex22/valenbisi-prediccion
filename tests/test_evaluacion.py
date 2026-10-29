@@ -218,3 +218,25 @@ def test_calibracion_por_mes_usa_el_mes_local():
     assert tabla["frecuencia_real"].tolist() == [0.5, 0.5]
     assert tabla["p_media_m"].tolist() == [0.25, 0.5]
     assert tabla["real_entre_predicho_m"].tolist() == [2.0, 1.0]
+
+
+def test_bootstrap_de_la_logloss_y_solo_las_medidas_pedidas():
+    from sklearn.metrics import log_loss
+    y, predicciones, dias = datos_por_dias()
+    r = intervalos_bootstrap(y, predicciones, dias, p_constante=0.1, diferencias=[("bueno", "malo")], n=30,
+                             medidas=("logloss",), decimales=6)
+    assert set(r["bueno"]) == {"logloss"}
+    assert r["bueno"]["logloss"]["estimacion"] == pytest.approx(log_loss(y, predicciones["bueno"]), abs=1e-6)
+    # Menos es mejor: el bueno tiene menor logloss y la diferencia es claramente negativa.
+    assert r["bueno - malo"]["logloss"]["superior"] < 0
+    with pytest.raises(ValueError, match="desconocidas"):
+        intervalos_bootstrap(y, predicciones, dias, p_constante=0.1, n=2, medidas=("auc_roc",))
+
+
+def test_fronteras_v2_a_medianoche_local_y_limites_con_ellas():
+    from valenbisi.evaluacion import FRONTERAS_V2
+    for frontera, fecha in zip(FRONTERAS_V2.values(), ("2025-03-01", "2025-09-25")):
+        assert frontera.tz_convert("Europe/Madrid") == pd.Timestamp(fecha, tz="Europe/Madrid")
+    filtros = limites("validacion", FRONTERAS_V2)
+    assert filtros == [("slot_utc", ">=", FRONTERAS_V2["validacion"]),
+                       ("slot_utc", "<", FRONTERAS_V2["prueba"] - pd.Timedelta(minutes=60))]
