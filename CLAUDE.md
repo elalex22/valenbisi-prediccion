@@ -55,16 +55,16 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - El 26-12-2022 no es festivo: el decreto autonómico lo cambió por el 24-06.
   - El 24-06 «recuperable» de 2024 y 2025 cuenta como festivo, porque no se trabaja.
   - El 24-04-2023 (traslado de San Vicente Mártir) cuenta como festivo, pero **no está confirmado en fuente oficial**: solo sale en prensa y en calendarios de terceros.
-- **Primer modelo: LightGBM** (`src/valenbisi/modelo.py`, `scripts/entrenar_lightgbm.py`):
+- **Modelo oficial: LightGBM con 15 features** (`src/valenbisi/modelo.py`, `scripts/entrenar_lightgbm.py`). Las cifras son del modelo de 15 features; entre paréntesis, las del primer modelo de 20 cuando cambian:
   - Pérdida logística **sin pesos de clase**: nada de `is_unbalance`, `scale_pos_weight` ni submuestreo de negativos, que estropearían la calibración. Si algún día no cabe en memoria, solo vale una muestra uniforme de todas las filas, y hay que avisar antes.
   - Parámetros: `num_leaves=63`, `learning_rate=0.05`, `min_data_in_leaf=1000`, `feature_fraction` y `bagging_fraction` de 0,8, y `lambda_l2=1`. No hay búsqueda de hiperparámetros todavía.
-  - Se entrena solo con entrenamiento. La parada temprana usa la logloss de validación (paciencia de 100 árboles), y se queda con 1040 árboles. Por eso la cifra de validación sale algo optimista.
+  - Se entrena solo con entrenamiento. La parada temprana usa la logloss de validación (paciencia de 100 árboles), y se queda con **1020 árboles** (1040 con 20 features). Por eso la cifra de validación sale algo optimista.
   - Cada conjunto se lee del Parquet con su propio filtro (`limites()` en `evaluacion.py`). La prueba no se ha cargado nunca.
-  - **Resultado en validación**: AUC-PR **0,715** y Brier skill **0,490**.
-    - Llena ahora: 0,859 y 0,674.
-    - No llena ahora: 0,327 y 0,241.
+  - **Resultado en validación**: AUC-PR **0,716** y Brier skill **0,491** (0,715 y 0,490). Logloss 0,09129.
+    - Llena ahora: 0,860 y 0,675.
+    - No llena ahora: 0,329 y 0,242.
   - Comprobación de que no hay fuga: una tabla de probabilidad solo con `libres` y sin machine learning ya saca AUC-PR 0,512. Con 1 anclaje libre, el 23 % de las estaciones está llena a t+60. La mejora sale de ver cuántos huecos quedan, no solo si está llena o no.
-  - Calibración buena en general, pero **se queda algo corta en la zona media**: predice un 3,7 % donde la realidad es un 4,7 %, y un 10,7 % donde es un 12,1 %.
+  - Calibración buena en general, pero **se queda algo corta en la zona media**: predice un 3,7 % donde la realidad es un 4,6 %, y un 10,7 % donde es un 12,2 %.
   - **Decisión: no se recalibra.** El desfase viene del periodo, no del modelo (`scripts/diagnostico_calibracion.py`, sin reentrenar):
     - La tabla por libres, que no tiene nada que sobreajustar, se queda igual de corta. Con el mismo número de libres, validación se llena más que entrenamiento: con 3 libres, 7,9 % frente a 6,5 %; con 4, 5,0 % frente a 3,8 %.
     - Ajustada sin el bloque jun–ago 2024, en ese bloque solo se queda corta un 4–10 % (real ÷ predicho de 1,04 a 1,10). En validación, un 4–45 % (1,04 con 1 libre; 1,18 con 2–3; 1,33 con 4–6; 1,45 con 7 o más). Un calibrador ajustado con ese bloque no corregiría el desfase de validación.
@@ -87,9 +87,11 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 
     - Va de 0,76 a 1,30. Parte se repite cada año (sep–nov alto, dic–ene bajo) y parte no (febrero: 0,88 en 2023 y 1,30 en 2025).
     - Ningún modelo con estas features puede prever que un mes concreto sea atípico. La calibración de cada mes puede desviarse en esa medida.
-  - **Frente a la tabla por libres** (`scripts/comparar_validacion.py`, sin reentrenar): LightGBM gana en todos los tramos de `libres`. AUC-PR con 1 libre 0,415 frente a 0,243; con 2–3, 0,286 frente a 0,126; con 4–6, 0,188 frente a 0,043.
-  - Permutación por grupo dentro de los subgrupos difíciles (caída de AUC-PR): con 1–5 libres, la tendencia da 0,010 y el tiempo de ayer 0,006; en «no llena ahora», 0,014 y 0,006. Siguen siendo pequeñas frente al estado actual, el calendario y la estación (0,12–0,27).
-  - Importancia por permutación (caída de AUC-PR): estado actual 0,64 (`ocupacion` y `libres`), calendario 0,19 (`minuto_del_dia`), estación 0,09. La tendencia (0,005) y el tiempo de ayer (0,003) apenas aportan.
+  - **Frente a la tabla por libres** (`scripts/comparar_validacion.py`, sin reentrenar): LightGBM gana en todos los tramos de `libres`. AUC-PR con 1 libre 0,417 frente a 0,243; con 2–3, 0,286 frente a 0,126; con 4–6, 0,189 frente a 0,043; con 7 o más, 0,153 frente a 0,009.
+  - Importancia por permutación (caída de AUC-PR): estado actual 0,64 (`ocupacion` 0,39, `libres` 0,21, `llena` 0,15), calendario 0,19 (`minuto_del_dia`), estación 0,09 y tendencia 0,005.
+    - Dentro de los subgrupos difíciles la tendencia pesa algo más: 0,011 con 1–5 libres y 0,015 en «no llena ahora». Aun así, queda lejos del estado actual, el calendario y la estación (0,12–0,28).
+    - En el modelo de 20 features, el tiempo de ayer daba 0,003 en total y 0,006 en los subgrupos difíciles.
+  - Figuras en `reports/figures/*_lightgbm_validacion.png` y `*_comparacion_validacion.png`, resumen en `data/processed/resumen_lightgbm.json` y `resumen_comparacion_validacion.json`, y modelo en `models/lightgbm.txt` (sin versionar).
 - **Ablación** (`scripts/ablacion_lightgbm.py` → `data/processed/resumen_ablacion.json`): mismos parámetros y parada temprana, medida en validación.
 
   | Variante | Features | Árboles | Logloss | AUC-PR | Skill | AUC-PR no llena |
@@ -103,11 +105,10 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - El ruido de semilla es de 0,00001 de logloss y 0,0002 de AUC-PR. La semilla 42 reproduce exactamente el modelo de 20 features.
   - **Se mantiene la tendencia.** Quitarla empeora la logloss en 0,0005, unas 50 veces el ruido, y empeora todos los tramos de pocos huecos.
   - **Se quita el tiempo de ayer.** Sin él mejora todo: la logloss baja 0,0002, unas 20 veces el ruido. Los árboles lo usaban para reconocer días concretos de entrenamiento. Además, quitarlo evita depender de AEMET para predecir.
-  - **Modelo oficial: 15 features** (`FEATURES_MODELO` y `GRUPOS_MODELO` en `modelo.py`). Las 20 candidatas siguen en el Parquet; el modelo anterior queda en `models/lightgbm_20_features.txt` y su resumen en `data/processed/resumen_lightgbm_20_features.json`.
-  - Figuras en `reports/figures/*_lightgbm_validacion.png`, resumen en `data/processed/resumen_lightgbm.json` y modelo en `models/lightgbm.txt` (sin versionar).
+  - **Modelo oficial: 15 features** (`FEATURES_MODELO` y `GRUPOS_MODELO` en `modelo.py`). Las 20 candidatas siguen en el Parquet; el modelo anterior queda en `models/lightgbm_20_features.txt` y su resumen en `data/processed/resumen_lightgbm_20_features.json`. Al reentrenarlo, el modelo oficial reproduce exactamente la variante «sin tiempo de ayer».
 
 - **Evaluación final en la prueba: decisiones fijadas antes de mirarla** (aprobadas el 2026-10-29, con la prueba sin cargar nunca):
-  - **Resultado principal**: LightGBM con las 15 features de `FEATURES_MODELO` y los mismos `PARAMETROS`, **reentrenado con entrenamiento + validación**, sin parada temprana y con un **número fijo de árboles igual al `best_iteration` del modelo de 15 features** entrenado con entrenamiento. Motivo: el periodo importa (variabilidad mensual) y validación (sep 2024–feb 2025) son los datos más cercanos a la prueba.
+  - **Resultado principal**: LightGBM con las 15 features de `FEATURES_MODELO` y los mismos `PARAMETROS`, **reentrenado con entrenamiento + validación**, sin parada temprana y con un **número fijo de árboles igual al `best_iteration` del modelo de 15 features** entrenado con entrenamiento: **1020**. Motivo: el periodo importa (variabilidad mensual) y validación (sep 2024–feb 2025) son los datos más cercanos a la prueba.
     - Las cuatro referencias (constante, persistencia, frecuencia y tabla por libres) se ajustan también con entrenamiento + validación. La constante del Brier skill sale de esos mismos datos.
   - **Resultado secundario**: el modelo oficial entrenado solo con entrenamiento (`models/lightgbm.txt`), con las referencias ajustadas solo con entrenamiento. Sirve para ver cuánto aporta reentrenar con datos recientes.
   - Después de ver la prueba no se cambia ninguna decisión de modelado. Si el script tiene un error de código, se corrige, se vuelve a ejecutar y se documenta.
