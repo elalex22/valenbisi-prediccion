@@ -33,7 +33,7 @@ from sklearn.metrics import precision_recall_curve
 from valenbisi.dataset import formatear_entero
 from valenbisi.evaluacion import FRONTERAS, TRAMOS_LIBRES, evaluar, evaluar_por_tramos, limites, tabla_calibracion
 from valenbisi.figuras import COLORES, GRIS, TEXTO, TEXTO_SUAVE, estilo_ejes, guardar
-from valenbisi.memoria import comprobar_memoria, memoria_libre_gb, memoria_proceso_gb
+from valenbisi.memoria import comprobar_memoria, evitar_suspension, memoria_libre_gb, memoria_proceso_gb
 from valenbisi.modelo import FEATURES_MODELO, GRUPOS_MODELO, PARAMETROS, importancia_permutacion, matriz
 from valenbisi.referencias import (
     ajustar_frecuencia,
@@ -130,6 +130,7 @@ def main() -> None:
     parser.add_argument("--minimo-libre-gb", type=float, default=1.5,
                         help="RAM libre del equipo por debajo de la cual el script se para")
     args = parser.parse_args()
+    evitar_suspension()
     inicio = time.monotonic()
     comprobar_memoria(args.minimo_libre_gb)
 

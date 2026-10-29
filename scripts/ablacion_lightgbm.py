@@ -17,7 +17,6 @@ Uso (desde la raíz del proyecto):
 """
 
 import argparse
-import ctypes
 import gc
 import json
 import sys
@@ -30,7 +29,7 @@ import pyarrow.parquet as pq
 from valenbisi.dataset import formatear_entero
 from valenbisi.evaluacion import evaluar, evaluar_por_tramos, limites
 from valenbisi.features import FEATURES
-from valenbisi.memoria import comprobar_memoria, memoria_libre_gb, memoria_proceso_gb
+from valenbisi.memoria import comprobar_memoria, evitar_suspension, memoria_libre_gb, memoria_proceso_gb
 from valenbisi.modelo import GRUPOS, PARAMETROS, dataset, entrenar, matriz, vigilar_memoria
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -54,13 +53,6 @@ VARIANTES = {
 def memoria() -> str:
     proceso, libre = memoria_proceso_gb(), memoria_libre_gb()
     return "" if proceso is None else f"proceso {proceso[0]:.1f} GB (pico {proceso[1]:.1f}), equipo {libre:.1f} GB libres"
-
-
-def evitar_suspension() -> None:
-    """Pide a Windows que no suspenda el equipo mientras este proceso siga vivo."""
-    if sys.platform == "win32":
-        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
-        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
 
 
 def leer(ruta: Path, conjunto: str, columnas: list[str]):

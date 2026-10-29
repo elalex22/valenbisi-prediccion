@@ -66,3 +66,14 @@ def comprobar_memoria(minimo_libre_gb: float) -> None:
         proceso = memoria_proceso_gb()
         uso = f"; este proceso usa {proceso[0]:.1f} GB" if proceso else ""
         raise MemoryError(f"Quedan {libre:.1f} GB libres (mínimo {minimo_libre_gb} GB){uso}. Se para aquí.")
+
+
+def evitar_suspension() -> None:
+    """Pide a Windows que no suspenda el equipo mientras este proceso siga vivo.
+
+    Un script de horas puede quedarse parado si el equipo se suspende. La
+    petición caduca sola al acabar el proceso: no cambia la configuración.
+    """
+    if sys.platform == "win32":
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
