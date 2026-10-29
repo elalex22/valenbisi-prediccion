@@ -49,6 +49,7 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Estación: `estacion` como categórica nativa de LightGBM, más `lat` y `lon`.
   - Calendario (`src/valenbisi/calendario.py`): `minuto_del_dia`, `dia_semana`, `mes` y `festivo`, en hora local a partir de `slot_utc`.
   - Meteorología (`src/valenbisi/tiempo.py`): `tmed`, `tmin`, `tmax`, `prec` y `sol` **del día local anterior**, con el sufijo `_ayer`. El dato del mismo día sería una fuga, porque incluye horas que aún no han pasado. `"Ip"` se convierte en 0,05 mm.
+    - Siguen en el Parquet (`FEATURES` en `features.py` son las 20 candidatas), pero **el modelo oficial no las usa** (ver la ablación).
   - Un test de fuga cambia y borra las fotos posteriores a t y comprueba que las features de t no cambian.
 - **Festivos** (`src/valenbisi/calendario.py`): tabla escrita a mano con los nacionales, autonómicos y locales de València (2022-12 a 2025-12), revisada.
   - El 26-12-2022 no es festivo: el decreto autonómico lo cambió por el 24-06.
@@ -63,11 +64,46 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
     - Llena ahora: 0,859 y 0,674.
     - No llena ahora: 0,327 y 0,241.
   - Comprobación de que no hay fuga: una tabla de probabilidad solo con `libres` y sin machine learning ya saca AUC-PR 0,512. Con 1 anclaje libre, el 23 % de las estaciones está llena a t+60. La mejora sale de ver cuántos huecos quedan, no solo si está llena o no.
-  - Calibración buena en general, pero **se queda algo corta en la zona media**: predice un 3,7 % donde la realidad es un 4,7 %, y un 10,7 % donde es un 12,1 %. Está pendiente decidir si se recalibra (con una parte de entrenamiento, nunca con validación).
-    - La tabla por libres tiene el mismo desfase: con el mismo número de libres, validación se llena más que entrenamiento (con 3 libres, 7,9 % frente a 6,5 %; con 4, 5,0 % frente a 3,8 %). Apunta a deriva entre periodos, no a un fallo del modelo.
+  - Calibración buena en general, pero **se queda algo corta en la zona media**: predice un 3,7 % donde la realidad es un 4,7 %, y un 10,7 % donde es un 12,1 %.
+  - **Decisión: no se recalibra.** El desfase viene del periodo, no del modelo (`scripts/diagnostico_calibracion.py`, sin reentrenar):
+    - La tabla por libres, que no tiene nada que sobreajustar, se queda igual de corta. Con el mismo número de libres, validación se llena más que entrenamiento: con 3 libres, 7,9 % frente a 6,5 %; con 4, 5,0 % frente a 3,8 %.
+    - Ajustada sin el bloque jun–ago 2024, en ese bloque solo se queda corta un 4–10 % (real ÷ predicho de 1,04 a 1,10). En validación, un 4–45 % (1,04 con 1 libre; 1,18 con 2–3; 1,33 con 4–6; 1,45 con 7 o más). Un calibrador ajustado con ese bloque no corregiría el desfase de validación.
+  - **Límite conocido: variabilidad mensual.** Observado ÷ esperado por mes (filas con al menos 1 libre, tabla por libres de todo entrenamiento):
+
+    | Mes | 2022–23 | 2023–24 | 2024–25 |
+    |---|---|---|---|
+    | Sep | — | 1,199 | 1,194 (val.) |
+    | Oct | — | 1,216 | 1,205 (val.) |
+    | Nov | — | 1,212 | 1,288 (val.) |
+    | Dic | 0,942 | 0,944 | 0,893 (val.) |
+    | Ene | 0,852 | 0,884 | 0,980 (val.) |
+    | Feb | 0,878 | sin datos | 1,304 (val.) |
+    | Mar | 1,119 | sin datos | (prueba) |
+    | Abr | 0,936 | sin datos | (prueba) |
+    | May | 1,014 | sin datos | (prueba) |
+    | Jun | 1,058 | 1,116 | (prueba) |
+    | Jul | 0,875 | 1,013 | (prueba) |
+    | Ago | 0,760 | 0,959 | (prueba) |
+
+    - Va de 0,76 a 1,30. Parte se repite cada año (sep–nov alto, dic–ene bajo) y parte no (febrero: 0,88 en 2023 y 1,30 en 2025).
+    - Ningún modelo con estas features puede prever que un mes concreto sea atípico. La calibración de cada mes puede desviarse en esa medida.
   - **Frente a la tabla por libres** (`scripts/comparar_validacion.py`, sin reentrenar): LightGBM gana en todos los tramos de `libres`. AUC-PR con 1 libre 0,415 frente a 0,243; con 2–3, 0,286 frente a 0,126; con 4–6, 0,188 frente a 0,043.
   - Permutación por grupo dentro de los subgrupos difíciles (caída de AUC-PR): con 1–5 libres, la tendencia da 0,010 y el tiempo de ayer 0,006; en «no llena ahora», 0,014 y 0,006. Siguen siendo pequeñas frente al estado actual, el calendario y la estación (0,12–0,27).
   - Importancia por permutación (caída de AUC-PR): estado actual 0,64 (`ocupacion` y `libres`), calendario 0,19 (`minuto_del_dia`), estación 0,09. La tendencia (0,005) y el tiempo de ayer (0,003) apenas aportan.
+- **Ablación** (`scripts/ablacion_lightgbm.py` → `data/processed/resumen_ablacion.json`): mismos parámetros y parada temprana, medida en validación.
+
+  | Variante | Features | Árboles | Logloss | AUC-PR | Skill | AUC-PR no llena |
+  |---|---|---|---|---|---|---|
+  | Completo, semilla 42 | 20 | 1040 | 0,09149 | 0,7150 | 0,4896 | 0,3272 |
+  | Completo, semilla 43 | 20 | 1043 | 0,09150 | 0,7152 | 0,4898 | 0,3273 |
+  | Sin tendencia | 17 | 1016 | 0,09199 | 0,7135 | 0,4879 | 0,3206 |
+  | Sin tiempo de ayer | 15 | 1020 | 0,09129 | 0,7160 | 0,4906 | 0,3288 |
+  | Sin las dos cosas | 12 | 868 | 0,09168 | 0,7147 | 0,4892 | 0,3230 |
+
+  - El ruido de semilla es de 0,00001 de logloss y 0,0002 de AUC-PR. La semilla 42 reproduce exactamente el modelo de 20 features.
+  - **Se mantiene la tendencia.** Quitarla empeora la logloss en 0,0005, unas 50 veces el ruido, y empeora todos los tramos de pocos huecos.
+  - **Se quita el tiempo de ayer.** Sin él mejora todo: la logloss baja 0,0002, unas 20 veces el ruido. Los árboles lo usaban para reconocer días concretos de entrenamiento. Además, quitarlo evita depender de AEMET para predecir.
+  - **Modelo oficial: 15 features** (`FEATURES_MODELO` y `GRUPOS_MODELO` en `modelo.py`). Las 20 candidatas siguen en el Parquet; el modelo anterior queda en `models/lightgbm_20_features.txt` y su resumen en `data/processed/resumen_lightgbm_20_features.json`.
   - Figuras en `reports/figures/*_lightgbm_validacion.png`, resumen en `data/processed/resumen_lightgbm.json` y modelo en `models/lightgbm.txt` (sin versionar).
 
 ## Reglas de trabajo
@@ -77,4 +113,6 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 - Commits pequeños, cada uno con un solo propósito.
 - No modificar nunca `data/raw/`.
 - Memoria: el equipo tiene 15,4 GB y suelen quedar unos 4 GB libres. Los scripts grandes vigilan la RAM con `src/valenbisi/memoria.py` y se paran si quedan menos de 1,5 GB libres. Si algo no cabe, avisar antes de reducir datos.
+  - Entrenar LightGBM necesita unos 3,7 GB libres al empezar (2,2 GB de pico más el margen). Con Chrome muy cargado puede no llegar.
+  - Los scripts largos llaman a `evitar_suspension()` (`memoria.py`) para que el equipo no se suspenda a mitad.
 - La prueba no se toca hasta el resultado final.
