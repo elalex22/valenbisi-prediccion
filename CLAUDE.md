@@ -112,6 +112,23 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
     - Las cuatro referencias (constante, persistencia, frecuencia y tabla por libres) se ajustan también con entrenamiento + validación. La constante del Brier skill sale de esos mismos datos.
   - **Resultado secundario**: el modelo oficial entrenado solo con entrenamiento (`models/lightgbm.txt`), con las referencias ajustadas solo con entrenamiento. Sirve para ver cuánto aporta reentrenar con datos recientes.
   - Después de ver la prueba no se cambia ninguna decisión de modelado. Si el script tiene un error de código, se corrige, se vuelve a ejecutar y se documenta.
+- **Resultado final en la prueba** (`scripts/evaluacion_final.py`, ejecutado **una vez** el 2026-10-29 desde el commit `6bf4438` con el árbol de trabajo limpio → `data/processed/resumen_prueba.json`, `models/lightgbm_final.txt`, `reports/figures/*_prueba.png`):
+  - Datos: 5.262.368 filas (mar–sep 2025, 207 días); un 5,90 % están llenas a t+60, frente al 5,74 % de entrenamiento + validación. No hay estaciones nuevas.
+  - Comprobación previa correcta: la persistencia y la frecuencia ajustadas solo con entrenamiento reproducen las cifras publicadas (0,3798 / 0,3255 y 0,2838 / 0,1332).
+  - **Escenario principal** (entrenamiento + validación, 1020 árboles), con intervalos al 95 % por bootstrap de días (200 réplicas):
+
+    | Modelo | AUC-PR | Brier skill | AUC-PR no llena |
+    |---|---|---|---|
+    | Persistencia | 0,380 | 0,326 | 0,025 |
+    | Frecuencia histórica | 0,290 | 0,139 | 0,104 |
+    | Tabla por libres | 0,499 [0,491–0,505] | 0,378 [0,371–0,384] | 0,186 |
+    | **LightGBM** | **0,699 [0,692–0,707]** | **0,476 [0,470–0,484]** | **0,340** |
+
+    - LightGBM frente a la tabla por libres: +0,200 de AUC-PR [0,194–0,205] y +0,098 de Brier skill [0,093–0,103]. Gana en todos los tramos de libres: con 1 libre, 0,431 frente a 0,245; con 2–3, 0,305 frente a 0,125; con 4–6, 0,207 frente a 0,043; con 7 o más, 0,144 frente a 0,010.
+    - Llena ahora: 0,840 / 0,657. No llena ahora: 0,340 / 0,242.
+  - **Escenario secundario** (solo entrenamiento): LightGBM 0,695 / 0,472. Reentrenar con validación aporta +0,004 de AUC-PR [0,0035–0,0046] y +0,004 de Brier skill [0,0037–0,0046]: poco, pero siempre a favor.
+  - Frente a validación (0,716 / 0,491), la prueba baja un poco (0,699 / 0,476). Es lo esperable: validación se usó para la parada temprana y para elegir, y es otra época del año.
+  - **Calibración**: se queda corta, más que en validación, porque la prueba se llena más. Real ÷ predicho por mes, entre 1,01 y 1,07 (media 1,04). Por tramos, predice un 4,0 % donde la realidad es un 5,4 % y un 1,4 % donde es un 2,1 %. En la zona alta acierta (0,69 frente a 0,68). Encaja con el límite conocido de variabilidad entre periodos.
 
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
@@ -122,4 +139,4 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
 - Memoria: el equipo tiene 15,4 GB y suelen quedar unos 4 GB libres. Los scripts grandes vigilan la RAM con `src/valenbisi/memoria.py` y se paran si quedan menos de 1,5 GB libres. Si algo no cabe, avisar antes de reducir datos.
   - Entrenar LightGBM necesita unos 3,7 GB libres al empezar (2,2 GB de pico más el margen). Con Chrome muy cargado puede no llegar.
   - Los scripts largos llaman a `evitar_suspension()` (`memoria.py`) para que el equipo no se suspenda a mitad.
-- La prueba no se toca hasta el resultado final.
+- La prueba ya se usó para el resultado final (2026-10-29). No se vuelve a usar para tomar decisiones: cualquier cambio de modelo posterior necesitaría datos nuevos para evaluarse.
