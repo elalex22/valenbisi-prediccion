@@ -38,6 +38,9 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Frecuencia por (estación, hora local de t, laborable/fin de semana), con respaldo (hora, tipo de día) si la celda tiene menos de 30 filas. AUC-PR 0,284, Brier skill 0,133. Los festivos cuentan como laborables.
   - La persistencia gana en conjunto, pero no sabe ordenar dentro de cada grupo. Entre las estaciones que no están llenas ahora, la frecuencia ordena mucho mejor (AUC-PR 0,100 frente a 0,025). El modelo tiene que combinar las dos cosas.
   - En validación: persistencia AUC-PR 0,393 y Brier skill 0,341; frecuencia 0,295 y 0,146.
+  - **Tabla por anclajes libres** (tercera referencia, `ajustar_libres` / `predecir_libres`): proporción de llena a t+60 por valor exacto de `libres` en entrenamiento, celdas de al menos 30 filas; sin celda válida se usa la celda válida inferior. Como `libres == 0` es `llena`, en «llena ahora» coincide con la persistencia.
+    - En validación: AUC-PR 0,512 y Brier skill 0,392; en «no llena ahora», 0,186 y 0,166.
+    - Su cifra en prueba se calcula en la evaluación final, junto con LightGBM (`evaluar_referencias.py` no la incluye todavía).
 - **Features** (`src/valenbisi/features.py`, `scripts/construir_features.py` → `data/processed/valenbisi_features.parquet`):
   - Estado actual: `llena`, `libres`, `bicis`, `total` y `ocupacion = bicis / (bicis + libres)`. Se divide entre los anclajes que funcionan, así que una estación llena con anclajes averiados da 1,0.
   - Tendencia: `delta_libres_k = libres(t) − libres(t−k)` para k = 15, 30 y 60 min.
@@ -61,6 +64,9 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
     - No llena ahora: 0,327 y 0,241.
   - Comprobación de que no hay fuga: una tabla de probabilidad solo con `libres` y sin machine learning ya saca AUC-PR 0,512. Con 1 anclaje libre, el 23 % de las estaciones está llena a t+60. La mejora sale de ver cuántos huecos quedan, no solo si está llena o no.
   - Calibración buena en general, pero **se queda algo corta en la zona media**: predice un 3,7 % donde la realidad es un 4,7 %, y un 10,7 % donde es un 12,1 %. Está pendiente decidir si se recalibra (con una parte de entrenamiento, nunca con validación).
+    - La tabla por libres tiene el mismo desfase: con el mismo número de libres, validación se llena más que entrenamiento (con 3 libres, 7,9 % frente a 6,5 %; con 4, 5,0 % frente a 3,8 %). Apunta a deriva entre periodos, no a un fallo del modelo.
+  - **Frente a la tabla por libres** (`scripts/comparar_validacion.py`, sin reentrenar): LightGBM gana en todos los tramos de `libres`. AUC-PR con 1 libre 0,415 frente a 0,243; con 2–3, 0,286 frente a 0,126; con 4–6, 0,188 frente a 0,043.
+  - Permutación por grupo dentro de los subgrupos difíciles (caída de AUC-PR): con 1–5 libres, la tendencia da 0,010 y el tiempo de ayer 0,006; en «no llena ahora», 0,014 y 0,006. Siguen siendo pequeñas frente al estado actual, el calendario y la estación (0,12–0,27).
   - Importancia por permutación (caída de AUC-PR): estado actual 0,64 (`ocupacion` y `libres`), calendario 0,19 (`minuto_del_dia`), estación 0,09. La tendencia (0,005) y el tiempo de ayer (0,003) apenas aportan.
   - Figuras en `reports/figures/*_lightgbm_validacion.png`, resumen en `data/processed/resumen_lightgbm.json` y modelo en `models/lightgbm.txt` (sin versionar).
 
