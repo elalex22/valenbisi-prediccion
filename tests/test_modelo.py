@@ -4,7 +4,15 @@ import pyarrow as pa
 import pytest
 
 from valenbisi.features import FEATURES
-from valenbisi.modelo import GRUPOS, dataset, entrenar, importancia_permutacion, matriz
+from valenbisi.modelo import (
+    FEATURES_MODELO,
+    GRUPOS,
+    GRUPOS_MODELO,
+    dataset,
+    entrenar,
+    importancia_permutacion,
+    matriz,
+)
 
 COLUMNAS = ["senal", "ruido", "estacion"]
 
@@ -30,6 +38,15 @@ def test_matriz_conserva_nulos_y_pasa_booleanos_a_numeros():
 def test_grupos_cubren_cada_feature_una_vez():
     en_grupos = [c for columnas in GRUPOS.values() for c in columnas]
     assert sorted(en_grupos) == sorted(FEATURES)
+
+
+def test_el_modelo_oficial_usa_15_features_sin_el_tiempo_de_ayer():
+    assert len(FEATURES_MODELO) == 15
+    assert not any(f.endswith("_ayer") for f in FEATURES_MODELO)
+    assert {f"delta_libres_{k}" for k in (15, 30, 60)} <= set(FEATURES_MODELO)
+    # Mismo orden que el Parquet, y los grupos del modelo cubren justo sus features.
+    assert FEATURES_MODELO == [f for f in FEATURES if f in FEATURES_MODELO]
+    assert sorted(c for columnas in GRUPOS_MODELO.values() for c in columnas) == sorted(FEATURES_MODELO)
 
 
 def test_sin_pesos_las_probabilidades_salen_calibradas():

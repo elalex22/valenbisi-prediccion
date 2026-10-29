@@ -30,10 +30,18 @@ from sklearn.metrics import precision_recall_curve
 
 from valenbisi.dataset import formatear_entero
 from valenbisi.evaluacion import evaluar, limites, tabla_calibracion
-from valenbisi.features import FEATURES
 from valenbisi.figuras import COLORES, GRIS, TEXTO, TEXTO_SUAVE, estilo_ejes, guardar
 from valenbisi.memoria import comprobar_memoria, memoria_libre_gb, memoria_proceso_gb
-from valenbisi.modelo import GRUPOS, PARAMETROS, dataset, entrenar, importancia_permutacion, matriz, vigilar_memoria
+from valenbisi.modelo import (
+    FEATURES_MODELO,
+    GRUPOS_MODELO,
+    PARAMETROS,
+    dataset,
+    entrenar,
+    importancia_permutacion,
+    matriz,
+    vigilar_memoria,
+)
 from valenbisi.referencias import ajustar_frecuencia, ajustar_persistencia, predecir_frecuencia, predecir_persistencia
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -148,7 +156,7 @@ def main() -> None:
 
     # 2. Matrices de LightGBM. Cada tabla de Arrow se suelta en cuanto está en la matriz,
     #    y la de entrenamiento en cuanto LightGBM ha construido sus histogramas.
-    tabla = leer(args.features, "entrenamiento", [*FEATURES, "llena_60"])
+    tabla = leer(args.features, "entrenamiento", [*FEATURES_MODELO, "llena_60"])
     filas_entrenamiento = tabla.num_rows
     X, y = matriz(tabla), tabla.column("llena_60").to_numpy()
     del tabla
@@ -159,10 +167,10 @@ def main() -> None:
     gc.collect()
     print(f"  histogramas construidos ({memoria()})", flush=True)
 
-    tabla = leer(args.features, "validacion", [*FEATURES, "llena_60"])
+    tabla = leer(args.features, "validacion", [*FEATURES_MODELO, "llena_60"])
     X_val, y_val = matriz(tabla), tabla.column("llena_60").to_numpy()
     del tabla
-    if len(X_val) != len(validacion) or not (X_val[:, FEATURES.index("llena")] == validacion["llena"]).all():
+    if len(X_val) != len(validacion) or not (X_val[:, FEATURES_MODELO.index("llena")] == validacion["llena"]).all():
         raise ValueError("Las filas de validación no coinciden entre las dos lecturas")
     d_validacion = dataset(X_val, y_val, referencia=d_entrenamiento)
     comprobar_memoria(args.minimo_libre_gb)
@@ -191,13 +199,13 @@ def main() -> None:
 
     # 5. Importancias: ganancia (gratis, en entrenamiento) y permutación (en una muestra de validación).
     ganancia_bruta = modelo.feature_importance("gain", iteration=mejor)
-    ganancia = {f: round(float(g / ganancia_bruta.sum() * 100), 2) for f, g in zip(FEATURES, ganancia_bruta)}
+    ganancia = {f: round(float(g / ganancia_bruta.sum() * 100), 2) for f, g in zip(FEATURES_MODELO, ganancia_bruta)}
     print(f"Importancia por permutación en {formatear_entero(FILAS_PERMUTACION)} filas de validación", flush=True)
     muestra = np.random.default_rng(0).choice(len(X_val), size=min(FILAS_PERMUTACION, len(X_val)), replace=False)
     X_m, y_m = X_val[muestra], y_val[muestra]
-    base, por_feature = importancia_permutacion(predecir, X_m, y_m, {f: [i] for i, f in enumerate(FEATURES)})
-    _, por_grupo = importancia_permutacion(
-        predecir, X_m, y_m, {g: [FEATURES.index(f) for f in cols] for g, cols in GRUPOS.items()}, semilla=1)
+    base, por_feature = importancia_permutacion(predecir, X_m, y_m, {f: [i] for i, f in enumerate(FEATURES_MODELO)})
+    grupos = {g: [FEATURES_MODELO.index(f) for f in cols] for g, cols in GRUPOS_MODELO.items()}
+    _, por_grupo = importancia_permutacion(predecir, X_m, y_m, grupos, semilla=1)
 
     figura_calibracion(y_val, predicciones, args.figuras / "calibracion_lightgbm_validacion.png")
     figura_pr(y_val, predicciones, resultados["todas"], args.figuras / "curvas_pr_lightgbm_validacion.png")

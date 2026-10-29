@@ -32,10 +32,9 @@ from sklearn.metrics import precision_recall_curve
 
 from valenbisi.dataset import formatear_entero
 from valenbisi.evaluacion import FRONTERAS, TRAMOS_LIBRES, evaluar, evaluar_por_tramos, limites, tabla_calibracion
-from valenbisi.features import FEATURES
 from valenbisi.figuras import COLORES, GRIS, TEXTO, TEXTO_SUAVE, estilo_ejes, guardar
 from valenbisi.memoria import comprobar_memoria, memoria_libre_gb, memoria_proceso_gb
-from valenbisi.modelo import GRUPOS, PARAMETROS, importancia_permutacion, matriz
+from valenbisi.modelo import FEATURES_MODELO, GRUPOS_MODELO, PARAMETROS, importancia_permutacion, matriz
 from valenbisi.referencias import (
     ajustar_frecuencia,
     ajustar_libres,
@@ -154,12 +153,12 @@ def main() -> None:
 
     # 2. LightGBM guardado, sobre las mismas filas de validación.
     modelo = lgb.Booster(model_file=str(args.modelo))
-    if modelo.feature_name() != FEATURES:
-        raise ValueError("Las features del modelo guardado no coinciden con FEATURES")
-    tabla = leer(args.features, "validacion", [*FEATURES, "llena_60"])
+    if modelo.feature_name() != FEATURES_MODELO:
+        raise ValueError("Las features del modelo guardado no coinciden con FEATURES_MODELO")
+    tabla = leer(args.features, "validacion", [*FEATURES_MODELO, "llena_60"])
     X_val, y_val = matriz(tabla), tabla.column("llena_60").to_numpy()
     del tabla
-    if len(X_val) != len(validacion) or not (X_val[:, FEATURES.index("libres")] == validacion["libres"]).all():
+    if len(X_val) != len(validacion) or not (X_val[:, FEATURES_MODELO.index("libres")] == validacion["libres"]).all():
         raise ValueError("Las filas de validación no coinciden entre las dos lecturas")
     comprobar_memoria(args.minimo_libre_gb)
     print(f"Validación: {formatear_entero(len(X_val))} filas ({memoria()})", flush=True)
@@ -182,7 +181,7 @@ def main() -> None:
         print(f"Permutación en {nombre}: {formatear_entero(len(muestra))} filas", flush=True)
         base, caidas = importancia_permutacion(
             predecir, X_val[muestra], y_val[muestra],
-            {g: [FEATURES.index(f) for f in cols] for g, cols in GRUPOS.items()}, semilla=1)
+            {g: [FEATURES_MODELO.index(f) for f in cols] for g, cols in GRUPOS_MODELO.items()}, semilla=1)
         permutacion[nombre] = {"filas": len(muestra), "positivos": round(float(y_val[muestra].mean()), 4),
                                "auc_pr_sin_barajar": round(base, 4),
                                "por_grupo": {g: round(c, 4) for g, c in caidas.items()}}

@@ -45,8 +45,15 @@ GRUPOS = {
     "tiempo de ayer": [f"{v}_ayer" for v in VARIABLES],
 }
 
+# Grupos que se quedan fuera del modelo oficial, aunque estén en el Parquet de
+# features. El tiempo de ayer no aporta y empeora validación (scripts/ablacion_lightgbm.py):
+# los árboles lo usaban para reconocer días concretos de entrenamiento.
+GRUPOS_DESCARTADOS = ("tiempo de ayer",)
+GRUPOS_MODELO = {g: columnas for g, columnas in GRUPOS.items() if g not in GRUPOS_DESCARTADOS}
+FEATURES_MODELO = [f for f in FEATURES if any(f in columnas for columnas in GRUPOS_MODELO.values())]
 
-def matriz(tabla: pa.Table, columnas: list[str] = FEATURES) -> np.ndarray:
+
+def matriz(tabla: pa.Table, columnas: list[str] = FEATURES_MODELO) -> np.ndarray:
     """Columnas de ``tabla`` como una matriz float32 por filas (lo que LightGBM lee sin copiar).
 
     Se rellena columna a columna para no tener a la vez un DataFrame entero y la
@@ -58,7 +65,7 @@ def matriz(tabla: pa.Table, columnas: list[str] = FEATURES) -> np.ndarray:
     return X
 
 
-def dataset(X: np.ndarray, y: np.ndarray, columnas: list[str] = FEATURES,
+def dataset(X: np.ndarray, y: np.ndarray, columnas: list[str] = FEATURES_MODELO,
             referencia: lgb.Dataset | None = None) -> lgb.Dataset:
     """Dataset de LightGBM ya construido (los histogramas), para poder soltar ``X`` justo después.
 
