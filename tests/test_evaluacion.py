@@ -6,11 +6,13 @@ import pytest
 
 from valenbisi.evaluacion import (
     CONJUNTOS,
+    calibracion_por_mes,
     FRONTERAS,
     evaluar,
     evaluar_por_tramos,
     intervalos_bootstrap,
     limites,
+    limites_union,
     metricas,
     remuestreo_por_dias,
     repartir,
@@ -189,3 +191,30 @@ def test_bootstrap_de_una_diferencia_clara_no_cruza_el_cero():
     assert diferencia["estimacion"] == pytest.approx(r["bueno"]["auc_pr"]["estimacion"]
                                                      - r["malo"]["auc_pr"]["estimacion"], abs=1e-4)
     assert diferencia["inferior"] > 0
+
+
+def test_limites_union_lee_entrenamiento_y_validacion_sin_el_hueco(tmp_path):
+    slots = [F1 - minutos(m) for m in (90, 60, 45, 0)] + [F1, F1 + minutos(15)] + \
+            [F2 - minutos(m) for m in (75, 60, 15)] + [F2, F2 + minutos(600)]
+    df = filas(*slots).assign(slot_utc=lambda d: d["slot_utc"].astype("datetime64[us, UTC]"))
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False), tmp_path / "f.parquet")
+    conjuntos, _ = repartir(df)
+
+    leido = pd.read_parquet(tmp_path / "f.parquet", filters=limites_union(["entrenamiento", "validacion"]))
+    esperado = pd.concat([conjuntos["entrenamiento"], conjuntos["validacion"]])
+    assert leido["slot_utc"].tolist() == esperado["slot_utc"].tolist()
+    assert leido["slot_utc"].max() < F2  # nada de prueba
+
+
+def test_calibracion_por_mes_usa_el_mes_local():
+    # 31-mar 23:30 UTC ya es 1-abr en València (UTC+2 en verano).
+    slot = pd.Series(pd.to_datetime(["2025-03-10 10:00", "2025-03-20 10:00", "2025-03-31 23:30",
+                                     "2025-04-05 10:00"]).tz_localize("UTC"))
+    y = np.array([True, False, True, False])
+    tabla = calibracion_por_mes(slot, y, {"m": np.array([0.25, 0.25, 0.5, 0.5])})
+
+    assert tabla["mes"].tolist() == ["2025-03", "2025-04"]
+    assert tabla["filas"].tolist() == [2, 2]
+    assert tabla["frecuencia_real"].tolist() == [0.5, 0.5]
+    assert tabla["p_media_m"].tolist() == [0.25, 0.5]
+    assert tabla["real_entre_predicho_m"].tolist() == [2.0, 1.0]

@@ -62,6 +62,15 @@ def limites(nombre: str, fronteras: dict[str, pd.Timestamp] = FRONTERAS) -> list
     return filtros
 
 
+def limites_union(nombres: list[str], fronteras: dict[str, pd.Timestamp] = FRONTERAS) -> list[list[tuple]]:
+    """Filtro de pyarrow (OR de los :func:`limites` de cada uno) que lee la unión exacta de varios conjuntos.
+
+    Para el modelo final, que se entrena con entrenamiento + validación: las filas
+    del hueco entre los dos siguen fuera, igual que cuando se leían por separado.
+    """
+    return [limites(nombre, fronteras) for nombre in nombres]
+
+
 def metricas(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, p_constante: float) -> dict:
     """AUC-PR, Brier y Brier skill score de las probabilidades ``p`` frente a la realidad ``y``.
 
@@ -170,6 +179,22 @@ def intervalos_bootstrap(
             resultado[nombre][metrica] = {"estimacion": round(float(valor), 4),
                                           "inferior": round(float(inferior), 4), "superior": round(float(superior), 4)}
     return resultado
+
+
+def calibracion_por_mes(slot_utc: pd.Series, y: np.ndarray, predicciones: dict[str, np.ndarray]) -> pd.DataFrame:
+    """Por mes local: frecuencia real, probabilidad media de cada modelo y real ÷ predicho.
+
+    Real ÷ predicho > 1 significa que ese mes se llenó más de lo que decía el
+    modelo. Sirve para ver si el límite conocido de variabilidad mensual se repite.
+    """
+    datos = pd.DataFrame({"mes": slot_utc.dt.tz_convert(ZONA).dt.strftime("%Y-%m").to_numpy(),
+                          "y": np.asarray(y, dtype=bool), **{m: np.asarray(p, dtype=float)
+                                                             for m, p in predicciones.items()}})
+    tabla = datos.groupby("mes").agg(filas=("y", "size"), frecuencia_real=("y", "mean"),
+                                     **{f"p_media_{m}": (m, "mean") for m in predicciones})
+    for m in predicciones:
+        tabla[f"real_entre_predicho_{m}"] = tabla["frecuencia_real"] / tabla[f"p_media_{m}"]
+    return tabla.reset_index()
 
 
 def tabla_calibracion(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, n_tramos: int = 10) -> pd.DataFrame:
