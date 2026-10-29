@@ -164,6 +164,28 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
     - Aviso para la ablación: el `NaN` es más frecuente en entrenamiento que en validación, y se concentra cerca de los periodos congelados.
   - Test de fuga sobre las 35: cambiar o borrar fotos de cualquier estación posteriores a t, o la meteorología posterior, no altera las features de t.
 
+- **Ablación v2: reglas fijadas antes de ejecutar** (aprobadas el 2026-10-29; `scripts/ablacion_v2.py`):
+  - Reparto v2 (`FRONTERAS_V2` en `evaluacion.py`): entrenamiento de dic-2022 a feb-2025 y validación de mar a sep 2025, con el hueco de 60 min.
+  - LightGBM con los `PARAMETROS` de la v1 y parada temprana por la logloss de validación. El Dataset se construye por bloques (`SecuenciaParquet` en `modelo.py`), que da exactamente el mismo modelo que la matriz completa (test).
+  - **Etapa 1**, sobre la base (las 15 features de la v1, sin el tiempo de ayer):
+    - A0 (semilla 42) y A0b (semilla 43), para medir el ruido;
+    - A1 + meteorología con cantidad (`temp`, `humedad`, `viento`, `nubosidad`, `prec_1h`, `prec_3h`);
+    - A2 + meteorología binaria (lo mismo con `llueve_1h` en vez de `prec_*`);
+    - A3 + vecinas;
+    - A4 + retardos largos.
+  - **Métrica**: la logloss de validación. Ruido = |A0 − A0b|.
+  - **Un grupo entra** si mejora a A0, la mejora es más del doble del ruido **y** el intervalo al 95 % de la diferencia pareada excluye el 0 (bootstrap por días, 200 réplicas).
+  - **Retardos, además**: la mejora de A4 tiene que mantenerse en las filas de validación con los cuatro retardos presentes, con un intervalo que excluya el 0.
+  - **Lluvia**: si entran A1 y A2, gana la cantidad solo si su intervalo frente a la binaria excluye el 0; si no, la binaria.
+  - **Etapa 2** (si entran dos o más grupos):
+    - A5 = la base con todos los grupos aceptados, y A5b, lo mismo con la semilla 43;
+    - A5 sin cada grupo: un grupo se queda solo si quitarlo empeora, con un intervalo que excluya el 0.
+  - Si no entra ningún grupo, la v2 usa las features de la v1.
+  - **Medidas aparte en validación**: todas las filas, con los 4 retardos presentes, con algún retardo `NaN`, no llena ahora y libres 1–6.
+  - **Simulación de la primera semana de la prueba v2**: con los modelos que tienen retardos, se vuelve a predecir toda la validación con los retardos de 7 días vacíos (días 2 a 7) y con todos los retardos vacíos (primer día), y se compara con A0. No decide nada: se documenta.
+  - Salidas: `data/processed/resumen_ablacion_v2.json` y las predicciones de validación en `data/processed/ablacion_v2/*.npy`.
+  - Los hiperparámetros se buscan después, con las features ya elegidas.
+
 ## Pendiente para el README
 - **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
 
