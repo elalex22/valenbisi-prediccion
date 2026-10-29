@@ -21,6 +21,8 @@ from valenbisi.tiempo import VARIABLES
 
 RETARDOS_MIN = (15, 30, 60)
 INTERVALO = pd.Timedelta(minutes=15)
+INTERVALOS_DIA = 96
+INTERVALOS_HORIZONTE = 4  # los 60 min del objetivo
 EPOCA = pd.Timestamp("2000-01-01", tz="UTC")
 # Las claves (intervalo, estación) se codifican como intervalo * MAX_ESTACION + estación.
 MAX_ESTACION = 1000
@@ -65,19 +67,44 @@ def preparar_referencia(df: pd.DataFrame) -> Referencia:
     return Referencia(claves=clave, libres=df["libres"].to_numpy()[orden])
 
 
-def deltas_libres(filas: pd.DataFrame, referencia: Referencia) -> pd.DataFrame:
-    """``delta_libres_k`` de cada fila de ``filas``, con las fotos anteriores de ``referencia``.
+def libres_en(filas: pd.DataFrame, referencia: Referencia, desplazamiento: int) -> np.ndarray:
+    """``libres`` de la misma estación ``desplazamiento`` intervalos de 15 min antes de cada fila.
 
-    Se busca por clave exacta con ``searchsorted``, sin un merge que duplique la tabla.
+    Se busca por clave exacta con ``searchsorted``, sin un merge que duplique la
+    tabla. Si falta esa foto, NaN: nunca se rellena con otra.
     """
-    clave = claves(filas["slot_utc"], filas["estacion"])
+    buscada = claves(filas["slot_utc"], filas["estacion"]) - desplazamiento * MAX_ESTACION
+    pos = np.searchsorted(referencia.claves, buscada).clip(max=len(referencia.claves) - 1)
+    existe = referencia.claves[pos] == buscada
+    return np.where(existe, referencia.libres[pos], np.nan).astype("float32")
+
+
+def deltas_libres(filas: pd.DataFrame, referencia: Referencia) -> pd.DataFrame:
+    """``delta_libres_k`` de cada fila de ``filas``, con las fotos anteriores de ``referencia``."""
     libres = filas["libres"].to_numpy(dtype="float32")
+    salida = {f"delta_libres_{k}": libres - libres_en(filas, referencia, k // 15) for k in RETARDOS_MIN}
+    return pd.DataFrame(salida, index=filas.index)
+
+
+def retardos_largos(filas: pd.DataFrame, referencia: Referencia) -> pd.DataFrame:
+    """La misma estación ayer y hace una semana, **a la hora del objetivo** (t + 60 min).
+
+    Lo que mejor anticipa si estará llena a t+60 es cómo estaba a esa misma hora
+    otros días, y sigue siendo pasado: t + 60 min − 24 h = t − 23 h.
+
+    - ``libres_obj_24h`` / ``libres_obj_7d``: libres en t+60−24 h / t+60−7 d.
+    - ``cambio_24h`` / ``cambio_7d``: cuánto cambió libres en esa hora aquel día,
+      de t−24 h a t+60−24 h (y lo mismo hace 7 días).
+
+    En UTC: los dos días de cambio de hora, «ayer a la misma hora» se desplaza una
+    hora local.
+    """
     salida = {}
-    for k in RETARDOS_MIN:
-        buscada = clave - (k // 15) * MAX_ESTACION
-        pos = np.searchsorted(referencia.claves, buscada).clip(max=len(referencia.claves) - 1)
-        existe = referencia.claves[pos] == buscada
-        salida[f"delta_libres_{k}"] = np.where(existe, libres - referencia.libres[pos], np.nan).astype("float32")
+    for nombre, dias in (("24h", 1), ("7d", 7)):
+        atras = dias * INTERVALOS_DIA
+        en_objetivo = libres_en(filas, referencia, atras - INTERVALOS_HORIZONTE)
+        salida[f"libres_obj_{nombre}"] = en_objetivo
+        salida[f"cambio_{nombre}"] = en_objetivo - libres_en(filas, referencia, atras)
     return pd.DataFrame(salida, index=filas.index)
 
 
