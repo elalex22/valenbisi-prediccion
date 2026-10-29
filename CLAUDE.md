@@ -106,6 +106,12 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - **Modelo oficial: 15 features** (`FEATURES_MODELO` y `GRUPOS_MODELO` en `modelo.py`). Las 20 candidatas siguen en el Parquet; el modelo anterior queda en `models/lightgbm_20_features.txt` y su resumen en `data/processed/resumen_lightgbm_20_features.json`.
   - Figuras en `reports/figures/*_lightgbm_validacion.png`, resumen en `data/processed/resumen_lightgbm.json` y modelo en `models/lightgbm.txt` (sin versionar).
 
+- **Evaluación final en la prueba: decisiones fijadas antes de mirarla** (aprobadas el 2026-10-29, con la prueba sin cargar nunca):
+  - **Resultado principal**: LightGBM con las 15 features de `FEATURES_MODELO` y los mismos `PARAMETROS`, **reentrenado con entrenamiento + validación**, sin parada temprana y con un **número fijo de árboles igual al `best_iteration` del modelo de 15 features** entrenado con entrenamiento. Motivo: el periodo importa (variabilidad mensual) y validación (sep 2024–feb 2025) son los datos más cercanos a la prueba.
+    - Las cuatro referencias (constante, persistencia, frecuencia y tabla por libres) se ajustan también con entrenamiento + validación. La constante del Brier skill sale de esos mismos datos.
+  - **Resultado secundario**: el modelo oficial entrenado solo con entrenamiento (`models/lightgbm.txt`), con las referencias ajustadas solo con entrenamiento. Sirve para ver cuánto aporta reentrenar con datos recientes.
+  - Después de ver la prueba no se cambia ninguna decisión de modelado. Si el script tiene un error de código, se corrige, se vuelve a ejecutar y se documenta.
+
 ## Reglas de trabajo
 - Windows con PowerShell; Python 3.12 en `.venv/`.
 - Explicar el plan antes de cualquier cambio grande y esperar el visto bueno.
