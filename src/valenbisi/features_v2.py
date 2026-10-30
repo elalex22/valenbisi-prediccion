@@ -14,6 +14,16 @@ from valenbisi.vecinas import FEATURES_VECINAS, Rejilla, features_vecinas
 FEATURES_RETARDOS = ["libres_obj_24h", "cambio_24h", "libres_obj_7d", "cambio_7d"]
 FEATURES_V2 = [*FEATURES, *FEATURES_METEO, *FEATURES_VECINAS, *FEATURES_RETARDOS]
 
+# Las 23 que eligió la ablación v2 (scripts/ablacion_v2.py, CLAUDE.md): las 15 de la v1
+# (sin el tiempo de ayer), las vecinas y los retardos. La meteorología horaria queda fuera.
+FEATURES_V2_FINALES = [
+    "llena", "libres", "bicis", "total", "ocupacion",
+    "delta_libres_15", "delta_libres_30", "delta_libres_60",
+    "estacion", "lat", "lon",
+    "minuto_del_dia", "dia_semana", "mes", "festivo",
+    *FEATURES_VECINAS, *FEATURES_RETARDOS,
+]
+
 
 def construir_features_v2(
     filas: pd.DataFrame, referencia: Referencia, rejilla: Rejilla, vecinas: np.ndarray,

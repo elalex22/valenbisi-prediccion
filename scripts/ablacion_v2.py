@@ -69,6 +69,8 @@ from valenbisi.modelo import (
     predecir_por_lotes,
     vigilar_memoria,
 )
+from valenbisi import reanudar
+from valenbisi.reanudar import clave, comprobar_nombre_nuevo
 from valenbisi.vecinas import FEATURES_VECINAS
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -134,26 +136,9 @@ def columnas(grupos: list[str]) -> list[str]:
 PARADA_SIN_REGISTRAR = {"max_arboles": 3000, "paciencia": 100}
 
 
-def clave(features: list[str], semilla: int, parametros: dict, max_arboles: int, paciencia: int) -> str:
-    """Identifica un entrenamiento: columnas (en orden), semilla, parámetros y parada temprana."""
-    return json.dumps([list(features), semilla, parametros, max_arboles, paciencia], sort_keys=True)
-
-
 def indice_previas(resumen: dict) -> dict[str, tuple[str, bool]]:
-    """{clave: (variante, parada_asumida)} de las variantes entrenadas de un resumen anterior.
-
-    Las simulaciones no se indexan: se reutilizan junto con su modelo.
-    """
-    indice = {}
-    for nombre, v in resumen.get("variantes", {}).items():
-        if "features" not in v:
-            continue
-        asumida = "max_arboles" not in v or "paciencia" not in v
-        k = clave(v["features"], v["semilla"], v.get("parametros", resumen["parametros"]),
-                  v.get("max_arboles", PARADA_SIN_REGISTRAR["max_arboles"]),
-                  v.get("paciencia", PARADA_SIN_REGISTRAR["paciencia"]))
-        indice.setdefault(k, (nombre, asumida))
-    return indice
+    """Como :func:`valenbisi.reanudar.indice_previas`, con la parada del primer resumen."""
+    return reanudar.indice_previas(resumen, PARADA_SIN_REGISTRAR)
 
 
 # ---------- Ejecución ----------
@@ -322,8 +307,7 @@ class Ablacion:
         gc.collect()
 
     def registrar(self, nombre: str, p: np.ndarray, info: dict) -> None:
-        if nombre in self.resumen["variantes"]:
-            raise ValueError(f"El nombre {nombre!r} ya está registrado: se sobrescribirían sus predicciones")
+        comprobar_nombre_nuevo(nombre, self.resumen["variantes"])
         self.predicciones[nombre] = p
         np.save(self.args.predicciones / f"{nombre}.npy", p.astype("float32"))
         self.resumen["variantes"][nombre] = {**info, "validacion": self.medir(p)}
