@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -46,6 +47,13 @@ def test_eleccion_de_la_lluvia():
     assert m.elegir_lluvia(False, False, None) is None
 
 
+def test_retardos_se_mantienen_solo_con_intervalo_por_debajo_de_0():
+    m = cargar()
+    assert m.retardos_se_mantienen(dif(-0.001, -0.0015, -0.0005))
+    assert not m.retardos_se_mantienen(dif(-0.001, -0.002, 0.0001))
+    assert not m.retardos_se_mantienen(None)
+
+
 def test_etapa_2_y_columnas():
     m = cargar()
     assert m.se_queda(dif(0.0003, 0.0001, 0.0005))          # quitarlo empeora: se queda
@@ -83,14 +91,17 @@ def test_ablacion_completa_con_parquet_sintetico(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "MAX_ARBOLES", 20)
     monkeypatch.setattr(m, "REPLICAS", 5)
     monkeypatch.setattr(m, "acepta", lambda diferencia, ruido: True)   # para recorrer también la etapa 2
+    monkeypatch.setattr(m, "retardos_se_mantienen", lambda diferencia: True)
     salida, carpeta = tmp_path / "resumen.json", tmp_path / "pred"
     monkeypatch.setattr(sys, "argv", ["ablacion_v2.py", "--features", str(ruta), "--salida", str(salida),
-                                      "--predicciones", str(carpeta), "--minimo-libre-gb", "0"])
+                                      "--predicciones", str(carpeta), "--modelos", str(tmp_path / "modelos"),
+                                      "--minimo-libre-gb", "0"])
     m.main()
 
     r = json.loads(salida.read_text(encoding="utf-8"))
     variantes = set(r["variantes"])
-    assert {"A0", "A0b", "A1", "A2", "A3", "A4", "A4_sin_7d", "A4_sin_retardos", "A5", "A5b"} <= variantes
+    assert {"A0", "A0b", "A1", "A2", "A3", "A4", "A4_sim_sin_7d", "A4_sim_sin_retardos", "A5", "A5_sim_sin_7d",
+            "A5_sim_sin_retardos", "A5b"} <= variantes
     d = r["decisiones"]
     assert d["lluvia"] in ("meteo_cantidad", "meteo_binaria")
     assert all(f"A5_sin_{g}" in variantes for g in d["etapa_2_candidatos"])
@@ -103,8 +114,30 @@ def test_ablacion_completa_con_parquet_sintetico(tmp_path, monkeypatch):
     # La simulación vacía los retardos: sus predicciones cambian respecto a A4.
     a4 = np.load(carpeta / "A4.npy")
     assert a4.dtype == np.float32 and len(a4) == r["filas"]["validacion"]
-    assert not np.array_equal(a4, np.load(carpeta / "A4_sin_retardos.npy"))
+    assert not np.array_equal(a4, np.load(carpeta / "A4_sim_sin_retardos.npy"))
     assert "A4 - A0 (con_retardos)" in r["comparaciones"]
+    # La simulación de A5 y la variante «A5 sin retardos» son cosas distintas, cada una en su fichero.
+    assert r["variantes"]["A5_sim_sin_retardos"]["de"] == "A5"
+    assert r["variantes"]["A5_sin_retardos"]["grupos"] == [g for g in d["etapa_2_candidatos"] if g != "retardos"]
+    assert not np.array_equal(np.load(carpeta / "A5_sim_sin_retardos.npy"), np.load(carpeta / "A5_sin_retardos.npy"))
+    # Cada modelo entrenado queda guardado y predice lo mismo que se midió.
+    entrenadas = [n for n, v in r["variantes"].items() if "features" in v]
+    assert sorted(f.stem for f in (tmp_path / "modelos").glob("*.txt")) == sorted(entrenadas)
+
+
+def test_ningun_nombre_de_simulacion_coincide_con_una_variante():
+    m = cargar()
+    variantes = {*m.ETAPA_1, "A5", "A5b", *(f"A5_sin_{g}" for g in m.GRUPOS)}
+    simulaciones = [m.nombre_simulacion(v, e) for v in variantes for e in m.ESCENARIOS_SIMULACION]
+    assert len(set(simulaciones)) == len(simulaciones)
+    assert not variantes & set(simulaciones)
+
+
+def test_registrar_dos_veces_el_mismo_nombre_es_un_error():
+    m = cargar()
+    falsa = SimpleNamespace(resumen={"variantes": {"A5_sin_retardos": {}}})
+    with pytest.raises(ValueError, match="ya está registrado"):
+        m.Ablacion.registrar(falsa, "A5_sin_retardos", np.zeros(3), {})
 
 
 def test_se_para_si_el_parquet_tiene_datos_de_la_prueba_v2(tmp_path, monkeypatch):
@@ -151,6 +184,7 @@ def preparar(m, tmp_path, monkeypatch, reanudar: bool, contador: list):
     monkeypatch.setattr(m, "MAX_ARBOLES", 20)
     monkeypatch.setattr(m, "REPLICAS", 5)
     monkeypatch.setattr(m, "acepta", lambda diferencia, ruido: True)
+    monkeypatch.setattr(m, "retardos_se_mantienen", lambda diferencia: True)
     entrenar_real = m.entrenar
 
     def contar(*args, **kwargs):
@@ -158,7 +192,8 @@ def preparar(m, tmp_path, monkeypatch, reanudar: bool, contador: list):
         return entrenar_real(*args, **kwargs)
     monkeypatch.setattr(m, "entrenar", contar)
     argv = ["ablacion_v2.py", "--features", str(ruta), "--salida", str(tmp_path / "resumen.json"),
-            "--predicciones", str(tmp_path / "pred"), "--minimo-libre-gb", "0", *(["--reanudar"] if reanudar else [])]
+            "--predicciones", str(tmp_path / "pred"), "--modelos", str(tmp_path / "modelos"), "--minimo-libre-gb", "0",
+            *(["--reanudar"] if reanudar else [])]
     monkeypatch.setattr(sys, "argv", argv)
 
 
@@ -180,10 +215,12 @@ def test_reanudar_reutiliza_todo_lo_identico_y_da_las_mismas_decisiones(tmp_path
     assert set(despues["reutilizadas"]) == entrenadas
     assert all(not nota["parada_asumida"] for nota in despues["reutilizadas"].values())
     assert despues["decisiones"]["grupos_finales"] == antes["decisiones"]["grupos_finales"]
-    # «A5 sin un grupo» tiene las mismas columnas y semilla que A3 o A4: se reutiliza de ellas.
-    candidatos = despues["decisiones"]["etapa_2_candidatos"]
-    origenes = {despues["reutilizadas"][f"A5_sin_{g}"]["reutilizada_de"] for g in candidatos}
-    assert origenes <= {"A1", "A2", "A3", "A4"}
+    # Cada variante sale de un entrenamiento con sus mismas columnas y semilla (con dos grupos,
+    # «A5 sin un grupo» sale de A3 o A4).
+    for nombre, nota in despues["reutilizadas"].items():
+        origen = despues["variantes"][nota["reutilizada_de"]]
+        assert origen["features"] == despues["variantes"][nombre]["features"]
+        assert origen["semilla"] == despues["variantes"][nombre]["semilla"]
     for nombre in entrenadas:
         assert despues["variantes"][nombre]["validacion"]["todas"]["logloss"] == pytest.approx(
             antes["variantes"][nombre]["validacion"]["todas"]["logloss"], abs=1e-6)
@@ -235,3 +272,57 @@ def test_reanudar_un_resumen_sin_parada_registrada_lo_indica(tmp_path, monkeypat
     despues = json.loads(ruta.read_text(encoding="utf-8"))
     assert contador == []
     assert all(nota["parada_asumida"] for nota in despues["reutilizadas"].values())
+
+
+def test_reanudar_recalcula_una_simulacion_que_falta_con_el_modelo_guardado(tmp_path, monkeypatch):
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=False, contador=[])
+    m.main()
+    antes = np.load(tmp_path / "pred" / "A5_sim_sin_retardos.npy")
+    (tmp_path / "pred" / "A5_sim_sin_retardos.npy").unlink()
+
+    # Con el modelo guardado: no se entrena nada y la simulación sale igual.
+    contador = []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=contador)
+    m.main()
+    assert contador == []
+    np.testing.assert_allclose(np.load(tmp_path / "pred" / "A5_sim_sin_retardos.npy"), antes, atol=1e-7)
+
+    # Sin el modelo ni la simulación: solo se reentrena A5.
+    (tmp_path / "pred" / "A5_sim_sin_retardos.npy").unlink()
+    (tmp_path / "modelos" / "A5.txt").unlink()
+    contador = []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=contador)
+    m.main()
+    r = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+    assert len(contador) == 1 and "A5" not in r["reutilizadas"] and "A5b" in r["reutilizadas"]
+    assert (tmp_path / "modelos" / "A5.txt").exists()
+    np.testing.assert_allclose(np.load(tmp_path / "pred" / "A5_sim_sin_retardos.npy"), antes, atol=1e-7)
+
+
+def test_un_modelo_guardado_que_no_reproduce_sus_predicciones_no_se_usa(tmp_path, monkeypatch):
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=False, contador=[])
+    m.main()
+    (tmp_path / "pred" / "A4_sim_sin_7d.npy").unlink()
+    # Se cambia el modelo de A4 por el de A4 con otra semilla (mismas columnas, otras predicciones).
+    a4 = tmp_path / "modelos" / "A4.txt"
+    otro = lgb_entrenado_con_otra_semilla(m, tmp_path)
+    otro.save_model(str(a4))
+    contador = []
+    m = cargar()
+    preparar(m, tmp_path, monkeypatch, reanudar=True, contador=contador)
+    m.main()
+    r = json.loads((tmp_path / "resumen.json").read_text(encoding="utf-8"))
+    assert "A4" not in r["reutilizadas"] and len(contador) >= 1
+
+
+def lgb_entrenado_con_otra_semilla(m, tmp_path):
+    import lightgbm as lgb
+    cols = m.columnas(["retardos"])
+    df = pd.read_parquet(tmp_path / "features_v2.parquet")
+    datos = lgb.Dataset(df[cols].to_numpy("float32"), label=df["llena_60"], feature_name=cols,
+                        categorical_feature=["estacion"])
+    return lgb.train({**m.PARAMETROS, "seed": 7, "bagging_seed": 7}, datos, num_boost_round=5)

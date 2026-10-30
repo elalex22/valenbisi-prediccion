@@ -24,14 +24,19 @@ Además, para cada variante: medidas en todas las filas, con y sin retardos, no
 llena ahora y libres 1–6; y, con los modelos con retardos, una simulación de
 la primera semana de la prueba v2 (retardos vaciados en toda la validación).
 
-Guarda las predicciones de validación (float32) en data/processed/ablacion_v2/
-y data/processed/resumen_ablacion_v2.json, actualizado tras cada paso. Vigila
-la RAM y evita la suspensión.
+Las simulaciones se llaman «{variante}_sim_{escenario}» (A4_sim_sin_7d…), para
+no chocar con las variantes de la etapa 2 («A5_sin_{grupo}»). Registrar dos
+veces el mismo nombre es un error.
+
+Guarda las predicciones de validación (float32) en data/processed/ablacion_v2/,
+los modelos en models/ablacion_v2/ y data/processed/resumen_ablacion_v2.json,
+actualizado tras cada paso. Vigila la RAM y evita la suspensión.
 
 Con --reanudar, reutiliza del resumen anterior los entrenamientos idénticos
 (mismas columnas en el mismo orden, semilla, parámetros y parada temprana) en
-vez de repetirlos; el resumen dice cuáles («reutilizadas»). Las comparaciones
-se recalculan siempre.
+vez de repetirlos; el resumen dice cuáles («reutilizadas»). Si faltan las
+simulaciones pero está el modelo guardado, y reproduce sus predicciones, se
+simulan con él sin reentrenar. Las comparaciones se recalculan siempre.
 
 Uso (desde la raíz del proyecto):
     .venv\\Scripts\\python scripts\\ablacion_v2.py [--reanudar]
@@ -44,6 +49,7 @@ import sys
 import time
 from pathlib import Path
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import pyarrow.compute as pc
@@ -77,6 +83,7 @@ ETAPA_1 = {"A0": ([], 42), "A0b": ([], 43), "A1": (["meteo_cantidad"], 42), "A2"
 VARIANTE_DE_GRUPO = {"meteo_cantidad": "A1", "meteo_binaria": "A2", "vecinas": "A3", "retardos": "A4"}
 RETARDOS_7D = ["libres_obj_7d", "cambio_7d"]
 ESCENARIOS_SIMULACION = {"sin_7d": RETARDOS_7D, "sin_retardos": FEATURES_RETARDOS}
+TOLERANCIA_MODELO = 1e-6   # un modelo guardado vale si reproduce sus predicciones (guardadas en float32)
 REPLICAS = 200
 MAX_ARBOLES = 3000
 
@@ -87,6 +94,11 @@ def acepta(diferencia: dict, ruido: float) -> bool:
     """``diferencia`` es la logloss de (variante − base): negativa = mejora."""
     e = diferencia["estimacion"]
     return e < 0 and -e > 2 * ruido and diferencia["superior"] < 0
+
+
+def retardos_se_mantienen(con_retardos_menos_base: dict | None) -> bool:
+    """La mejora de A4 se mantiene en las filas con los cuatro retardos (intervalo por debajo del 0)."""
+    return con_retardos_menos_base is not None and con_retardos_menos_base["superior"] < 0
 
 
 def elegir_lluvia(acepta_cantidad: bool, acepta_binaria: bool, cantidad_menos_binaria: dict | None) -> str | None:
@@ -102,6 +114,10 @@ def elegir_lluvia(acepta_cantidad: bool, acepta_binaria: bool, cantidad_menos_bi
 def se_queda(sin_grupo_menos_completo: dict) -> bool:
     """Etapa 2: quitar el grupo empeora (A5−g − A5 > 0) con un intervalo que excluye el 0."""
     return sin_grupo_menos_completo["inferior"] > 0
+
+
+def nombre_simulacion(variante: str, escenario: str) -> str:
+    return f"{variante}_sim_{escenario}"
 
 
 def columnas(grupos: list[str]) -> list[str]:
@@ -199,25 +215,34 @@ class Ablacion:
         """Carga un entrenamiento anterior idéntico (columnas en orden, semilla, parámetros y parada).
 
         Solo si están sus predicciones y, si hacen falta, las de sus simulaciones.
+        Las simulaciones que falten se calculan con el modelo guardado, si lo hay
+        y reproduce las predicciones.
         """
         previa = self.previas.get(clave(cols, semilla, PARAMETROS, MAX_ARBOLES, PACIENCIA))
         if previa is None:
             return False
         origen, asumida = previa
-        nombres = [origen, *([f"{origen}_{e}" for e in ESCENARIOS_SIMULACION] if simular_retardos else [])]
-        rutas = [self.args.predicciones / f"{n}.npy" for n in nombres]
-        if not all(r.exists() for r in rutas) or not all(n in self.previo["variantes"] for n in nombres):
+        p = self.cargar(origen)
+        if p is None:
             return False
-        cargadas = [np.load(r).astype("float64") for r in rutas]
-        if any(len(p) != len(self.y_val) for p in cargadas):
-            return False
+        simulaciones = {}
+        if simular_retardos:
+            simulaciones = {e: self.cargar(nombre_simulacion(origen, e)) for e in ESCENARIOS_SIMULACION}
+            if any(s is None for s in simulaciones.values()):
+                modelo = self.modelo_guardado(origen, cols, p)
+                if modelo is None:
+                    return False
+                s_val = SecuenciaParquet(self.args.features, cols, self.filtro_val)
+                for escenario in simulaciones:
+                    if simulaciones[escenario] is None:
+                        simulaciones[escenario] = self.simular(modelo, s_val, cols, escenario)
+                        print(f"  simulación {escenario} recalculada con el modelo guardado de {origen}", flush=True)
         nota = {"reutilizada_de": origen, "parada_asumida": asumida}
         anterior = {k: v for k, v in self.previo["variantes"][origen].items() if k not in ("validacion", *nota)}
-        self.registrar(nombre, cargadas[0], {**anterior, **nota})
-        for escenario, p in zip(ESCENARIOS_SIMULACION, cargadas[1:]):
-            simulacion = self.previo["variantes"][f"{origen}_{escenario}"]
-            self.registrar(f"{nombre}_{escenario}", p, {**{k: v for k, v in simulacion.items() if k != "validacion"},
-                                                         "de": nombre, **nota})
+        self.registrar(nombre, p, {**anterior, **nota})
+        for escenario, s in simulaciones.items():
+            self.registrar(nombre_simulacion(nombre, escenario), s,
+                           {"simulacion": escenario, "de": nombre, "vaciadas": ESCENARIOS_SIMULACION[escenario], **nota})
         self.resumen["reutilizadas"][nombre] = nota
         self.guardar()
         logloss = self.resumen["variantes"][nombre]["validacion"]["todas"]["logloss"]
@@ -225,6 +250,39 @@ class Ablacion:
               f"{' (parada sin registrar: 3000 árboles y paciencia 100 del commit 96718a0)' if asumida else ''}; "
               f"logloss {logloss:.6f} ==", flush=True)
         return True
+
+    def cargar(self, nombre: str) -> np.ndarray | None:
+        """Predicciones de una variante del resumen anterior, si están completas."""
+        ruta = self.args.predicciones / f"{nombre}.npy"
+        if nombre not in self.previo.get("variantes", {}) or not ruta.exists():
+            return None
+        p = np.load(ruta).astype("float64")
+        return p if len(p) == len(self.y_val) else None
+
+    def modelo_guardado(self, nombre: str, cols: list[str], p: np.ndarray) -> lgb.Booster | None:
+        """El modelo guardado de ``nombre``, solo si tiene las mismas columnas y reproduce ``p``."""
+        ruta = self.args.modelos / f"{nombre}.txt"
+        if not ruta.exists():
+            return None
+        modelo = lgb.Booster(model_file=str(ruta))
+        if modelo.feature_name() != cols:
+            return None
+        s_val = SecuenciaParquet(self.args.features, cols, self.filtro_val)
+        diferencia = float(np.abs(predecir_por_lotes(modelo, s_val) - p).max())
+        if diferencia > TOLERANCIA_MODELO:
+            print(f"  {ruta.name} no reproduce sus predicciones (diferencia {diferencia:.2e}): se reentrena", flush=True)
+            return None
+        return modelo
+
+    def simular(self, modelo: lgb.Booster, s_val: SecuenciaParquet, cols: list[str], escenario: str) -> np.ndarray:
+        """Predicciones de validación con las columnas del escenario vaciadas (NaN)."""
+        indices = [cols.index(c) for c in ESCENARIOS_SIMULACION[escenario]]
+        partes = []
+        for X in s_val.bloques():
+            X = X.copy()
+            X[:, indices] = np.nan
+            partes.append(modelo.predict(X, num_threads=PARAMETROS["num_threads"]))
+        return np.concatenate(partes)
 
     def variante(self, nombre: str, grupos: list[str], semilla: int, simular_retardos: bool = False) -> None:
         cols = columnas(grupos)
@@ -243,28 +301,29 @@ class Ablacion:
         segundos = time.monotonic() - inicio
         del d_ent, d_val
         gc.collect()
-        p = predecir_por_lotes(modelo, s_val, num_iteration=modelo.best_iteration)
+        # Se guarda solo hasta el mejor árbol, y se predice con el modelo ya guardado:
+        # así lo que se reutilice después es exactamente lo que se midió.
+        self.args.modelos.mkdir(parents=True, exist_ok=True)
+        ruta_modelo = self.args.modelos / f"{nombre}.txt"
+        modelo.save_model(str(ruta_modelo), num_iteration=modelo.best_iteration)
+        modelo = lgb.Booster(model_file=str(ruta_modelo))
+        p = predecir_por_lotes(modelo, s_val)
         self.registrar(nombre, p, {"grupos": grupos, "features": cols, "semilla": semilla, "parametros": PARAMETROS,
                                    "max_arboles": MAX_ARBOLES, "paciencia": PACIENCIA,
-                                   "arboles": modelo.best_iteration, "segundos_entrenamiento": round(segundos)})
+                                   "arboles": modelo.num_trees(), "segundos_entrenamiento": round(segundos)})
         if simular_retardos:
             for escenario, vaciar in ESCENARIOS_SIMULACION.items():
-                indices = [cols.index(c) for c in vaciar]
-                partes = []
-                for X in s_val.bloques():
-                    X = X.copy()
-                    X[:, indices] = np.nan
-                    partes.append(modelo.predict(X, num_iteration=modelo.best_iteration,
-                                                 num_threads=PARAMETROS["num_threads"]))
-                self.registrar(f"{nombre}_{escenario}", np.concatenate(partes),
+                self.registrar(nombre_simulacion(nombre, escenario), self.simular(modelo, s_val, cols, escenario),
                                {"simulacion": escenario, "de": nombre, "vaciadas": vaciar})
         logloss = self.resumen["variantes"][nombre]["validacion"]["todas"]["logloss"]
-        print(f"  {modelo.best_iteration} árboles, logloss {logloss:.6f} "
+        print(f"  {modelo.num_trees()} árboles, logloss {logloss:.6f} "
               f"({time.monotonic() - inicio:.0f} s; {memoria()})", flush=True)
         del modelo, s_ent, s_val
         gc.collect()
 
     def registrar(self, nombre: str, p: np.ndarray, info: dict) -> None:
+        if nombre in self.resumen["variantes"]:
+            raise ValueError(f"El nombre {nombre!r} ya está registrado: se sobrescribirían sus predicciones")
         self.predicciones[nombre] = p
         np.save(self.args.predicciones / f"{nombre}.npy", p.astype("float32"))
         self.resumen["variantes"][nombre] = {**info, "validacion": self.medir(p)}
@@ -292,6 +351,7 @@ def main() -> None:
     parser.add_argument("--features", type=Path, default=RAIZ / "data" / "processed" / "valenbisi_features_v2.parquet")
     parser.add_argument("--salida", type=Path, default=RAIZ / "data" / "processed" / "resumen_ablacion_v2.json")
     parser.add_argument("--predicciones", type=Path, default=RAIZ / "data" / "processed" / "ablacion_v2")
+    parser.add_argument("--modelos", type=Path, default=RAIZ / "models" / "ablacion_v2")
     parser.add_argument("--minimo-libre-gb", type=float, default=1.5,
                         help="RAM libre del equipo por debajo de la cual el script se para")
     parser.add_argument("--reanudar", action="store_true",
@@ -319,12 +379,11 @@ def main() -> None:
     for grupo, var in VARIANTE_DE_GRUPO.items():
         aceptados[grupo] = acepta(a.comparar(var, "A0"), ruido)
     if aceptados["retardos"]:
-        con_retardo = a.comparar("A4", "A0", "con_retardos")
-        aceptados["retardos"] = con_retardo is not None and con_retardo["superior"] < 0
+        aceptados["retardos"] = retardos_se_mantienen(a.comparar("A4", "A0", "con_retardos"))
         d["retardos_mejoran_con_retardo_presente"] = aceptados["retardos"]
     a.comparar("A4", "A0", "sin_retardos")
-    for escenario in ("sin_7d", "sin_retardos"):
-        a.comparar(f"A4_{escenario}", "A0")
+    for escenario in ESCENARIOS_SIMULACION:
+        a.comparar(nombre_simulacion("A4", escenario), "A0")
     las_dos = aceptados["meteo_cantidad"] and aceptados["meteo_binaria"]
     lluvia = elegir_lluvia(aceptados["meteo_cantidad"], aceptados["meteo_binaria"],
                            a.comparar("A1", "A2") if las_dos else None)
@@ -347,8 +406,8 @@ def main() -> None:
             if se_queda(a.comparar(f"A5_sin_{g}", "A5")):
                 finales.append(g)
         if "retardos" in grupos:
-            for escenario in ("sin_7d", "sin_retardos"):
-                a.comparar(f"A5_{escenario}", "A0")
+            for escenario in ESCENARIOS_SIMULACION:
+                a.comparar(nombre_simulacion("A5", escenario), "A0")
     else:
         finales = grupos
     d["grupos_finales"] = finales
@@ -362,7 +421,7 @@ def main() -> None:
         print(f"  {nombre:<26}{fila}")
     print(f"\nGrupos finales: {finales or 'ninguno (las features de la v1)'}; "
           f"{len(d['features_finales'])} features. Total {d['segundos_total']} s; {memoria()}")
-    print(f"Guardado en {args.salida} y {args.predicciones}")
+    print(f"Guardado en {args.salida}, {args.predicciones} y {args.modelos}")
 
 
 if __name__ == "__main__":
