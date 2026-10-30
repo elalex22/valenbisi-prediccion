@@ -240,7 +240,46 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
       - Pero es peor que un modelo que nunca tuvo retardos: 0,095963 frente a 0,095178 de A3 (+0,00079). En entrenamiento, el `NaN` de los retardos va unido a los periodos cercanos a los huecos de datos, así que el modelo no lo trata como un simple «no sé».
       - Solo afecta a un día de los 4 meses de la prueba v2.
     - Por eso se mantiene el resultado secundario fijado (sin la primera semana) y no se cambia nada.
-  - Siguiente paso: la búsqueda de hiperparámetros con estas 23 features.
+
+- **Comparación de modelos v2: reglas fijadas antes de ejecutar** (aprobadas el 2026-10-30). Con las 23 features (`FEATURES_V2_FINALES` en `features_v2.py`) y el reparto v2. Solo se usa la validación; la prueba v2 no se toca.
+  - **Comunes a todos los modelos:**
+    - sin pesos de clase ni submuestreo;
+    - parada temprana por la logloss de validación;
+    - cada script se puede reanudar (`--reanudar`, `src/valenbisi/reanudar.py`).
+  - **Configuraciones** (11 en total, pocas a propósito: elegir la mejor de muchas con la misma validación da ventaja por suerte):
+    - **LightGBM** (`PARAMETROS` de la v1, lr 0,05, paciencia 100, tope de 3000 árboles):
+
+      | | `num_leaves` | `min_data_in_leaf` | `lambda_l2` |
+      |---|---|---|---|
+      | L0 = A5 de la ablación | 63 | 1000 | 1 |
+      | L1 | 31 | 1000 | 1 |
+      | L2 | 127 | 1000 | 1 |
+      | L3 | 255 | 1000 | 1 |
+      | L4 | 127 | 5000 | 10 |
+      | L5 | 255 | 5000 | 10 |
+
+    - **XGBoost** (`hist`, `max_bin` 256, eta 0,05, `subsample` y `colsample_bytree` de 0,8, `lambda` 1, `min_child_weight` 50 ≈ 1000 filas, paciencia 100, tope de 3000; la estación como categórica nativa):
+      - X1 `lossguide` con 63 hojas;
+      - X2 `lossguide` con 255 hojas;
+      - X3 `depthwise` con profundidad 8.
+    - **Regresión logística por tramos:**
+      - todas las variables como indicadores: deciles de entrenamiento, `libres` exacto de 0 a 10 y luego 11–15 y 16 o más, un tramo «falta» para los `NaN`, one-hot de la estación y hora × tipo de día;
+      - `SGDClassifier` (log_loss, L2, promediado) por bloques con todas las filas, hasta 8 épocas y parada por la validación;
+      - `alpha` de 1e-5 (R1) o de 1e-6 (R2).
+  - **Métrica**: la logloss de validación en todas las filas. Las demás medidas (AUC-PR, Brier skill y subgrupos) se documentan, pero no deciden.
+  - **Ruido** de un modelo: |logloss con la semilla 42 − con la semilla 43| de su configuración elegida.
+    - En LightGBM es el de A5/A5b: 0,000064.
+    - En XGBoost y en la logística, la configuración de menor logloss se repite con la semilla 43. En la logística, la semilla solo cambia el barajado.
+  - **Una diferencia es clara** si:
+    - supera el doble del ruido mayor de los dos modelos comparados, **y**
+    - el intervalo al 95 % de la diferencia pareada excluye el 0 (bootstrap por días, 200 réplicas).
+  - **Dentro de cada modelo**: la configuración de menor logloss sustituye a la de partida solo si la mejora es clara. Si no, se queda la de partida: L0, X1 o R1, la logística más regularizada.
+  - **Entre modelos**:
+    - el orden de sencillez es logística < LightGBM < XGBoost;
+    - se empieza con la logística, LightGBM la sustituye si mejora de forma clara, y XGBoost sustituye al que quede si lo mejora de forma clara;
+    - **en caso de empate, gana el más sencillo**.
+  - El LightGBM de 15 features de la v1 con el reparto v2 (A0) se compara con el ganador para medir cuánto aporta la v2, pero no decide nada.
+  - Lo elegido se fija después en «Decisiones v2 congeladas», con la etiqueta `v2-congelado`, antes de abrir la prueba v2.
 
 ## Pendiente para el README
 - **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
