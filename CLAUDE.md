@@ -186,6 +186,62 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Salidas: `data/processed/resumen_ablacion_v2.json` y las predicciones de validación en `data/processed/ablacion_v2/*.npy`.
   - Los hiperparámetros se buscan después, con las features ya elegidas.
 
+- **Resultado de la ablación v2** (`data/processed/resumen_ablacion_v2.json`). Se ejecutó en tres tandas:
+  - La etapa 1 desde el commit `96718a0`. La ejecución se cortó durante A5 porque Claude Code la mató por falta de memoria del equipo.
+  - La etapa 2 con `--reanudar` (commit `751febd`).
+  - A5 otra vez, desde `550adcf`. La simulación de la primera semana de A5 con todos los retardos vaciados se había sobrescrito con la variante «A5 sin retardos», que tenía el mismo nombre.
+    - Ahora las simulaciones se llaman `{variante}_sim_{escenario}`, y registrar dos veces un nombre es un error.
+    - El A5 reentrenado da predicciones **idénticas** a las del original (diferencia 0), y las decisiones y las comparaciones de la etapa 2 no cambian.
+    - El modelo queda en `models/ablacion_v2/A5.txt`.
+  - Validación v2: 5.262.368 filas, de ellas 226.767 con algún retardo `NaN`. Entrenamiento: 15.158.645.
+  - **Etapa 1** (logloss de validación; diferencia frente a A0 con intervalo al 95 %):
+
+    | Variante | Features | Árboles | Logloss | Diferencia frente a A0 | AUC-PR | Skill | AUC-PR no llena | Logloss libres 1–6 |
+    |---|---|---|---|---|---|---|---|---|
+    | A0 base, semilla 42 | 15 | 1510 | 0,096428 | — | 0,6992 | 0,4764 | 0,3401 | 0,24217 |
+    | A0b base, semilla 43 | 15 | 1442 | 0,096441 | ruido 0,000013 | 0,6990 | 0,4764 | 0,3401 | 0,24213 |
+    | A1 + meteo con cantidad | 21 | 1523 | 0,096608 | +0,000180 [+0,000008, +0,000292] | 0,6989 | 0,4762 | 0,3408 | 0,24259 |
+    | A2 + meteo binaria | 20 | 1381 | 0,096573 | +0,000145 [−0,000020, +0,000259] | 0,6991 | 0,4763 | 0,3406 | 0,24256 |
+    | A3 + vecinas | 19 | 1489 | 0,095178 | **−0,001250** [−0,001429, −0,001103] | 0,7047 | 0,4823 | 0,3574 | 0,23915 |
+    | A4 + retardos | 19 | 1450 | 0,095290 | **−0,001139** [−0,001333, −0,000943] | 0,7066 | 0,4823 | 0,3449 | 0,24063 |
+
+    - **Entran las vecinas y los retardos.** Cada grupo mejora unas 90 veces el ruido, con el intervalo lejos del 0.
+    - Los retardos cumplen la condición extra: en las filas con los cuatro retardos, A4 − A0 = −0,001183 [−0,001349, −0,000996]. En las filas con algún `NaN` no se nota: −0,000159 [−0,000871, +0,000672].
+    - **La meteorología queda fuera en sus dos versiones.**
+      - Con cantidad empeora, y el intervalo excluye el 0. La binaria también empeora, aunque su intervalo cruza el 0.
+      - Tampoco mejora la logloss en «no llena ahora» ni en libres 1–6. La AUC-PR solo varía en milésimas.
+      - La explicación más probable es la de la ablación v1 con el tiempo de ayer: el tiempo apenas cambia el uso a 60 min vista, una vez que el modelo ve el estado, la hora y la estación, y los árboles lo usan para reconocer días concretos de entrenamiento. Además, la lluvia de reanálisis en un punto es ruidosa (ver el contraste con AEMET).
+      - Quitarla evita también depender de Open-Meteo para predecir.
+  - **Etapa 2** (las vecinas y los retardos juntos):
+
+    | Variante | Features | Árboles | Logloss | Diferencia frente a A5 | AUC-PR | Skill | AUC-PR no llena |
+    |---|---|---|---|---|---|---|---|
+    | A5, semilla 42 | 23 | 1557 | 0,094188 | — | 0,7111 | 0,4873 | 0,3604 |
+    | A5b, semilla 43 | 23 | 1754 | 0,094124 | ruido 0,000064 | 0,7118 | 0,4877 | 0,3605 |
+    | A5 sin vecinas (= A4) | 19 | 1450 | 0,095290 | +0,001102 [+0,000976, +0,001257] | 0,7066 | 0,4823 | 0,3449 |
+    | A5 sin retardos (= A3) | 19 | 1489 | 0,095178 | +0,000990 [+0,000804, +0,001137] | 0,7047 | 0,4823 | 0,3574 |
+
+    - **Se quedan los dos grupos:** quitar cualquiera empeora, con el intervalo lejos del 0. Lo que aportan se suma casi entero: A5 mejora a A0 en 0,00224, frente a 0,00125 + 0,00114 por separado.
+    - El ruido de semilla con 23 features (0,000064) es unas 5 veces el de la base, pero cada grupo aporta unas 15 veces ese ruido.
+    - Frente a A0, A5 sube la AUC-PR de 0,699 a 0,711 y el Brier skill de 0,476 a 0,487. En «no llena ahora», la AUC-PR pasa de 0,340 a 0,360, y en libres 1–6 la logloss baja de 0,2422 a 0,2378.
+  - **Features finales de la v2 (23):** las 15 de la v1, las 4 de vecinas (`vec_ocupacion`, `vec_frac_llenas`, `vec_libres_min`, `vec_delta_libres_60`) y los 4 retardos (`libres_obj_24h`, `cambio_24h`, `libres_obj_7d`, `cambio_7d`), en el orden de `FEATURES_V2` (`decisiones.features_finales` del resumen).
+  - **Simulación de la primera semana de la prueba v2** (toda la validación con los retardos vaciados; no decide nada):
+
+    | Modelo | Escenario | Logloss | Diferencia frente a A0 | AUC-PR |
+    |---|---|---|---|---|
+    | A4 | días 2 a 7 (sin los retardos de 7 días) | 0,095876 | −0,000553 [−0,000748, −0,000368] | 0,7034 |
+    | A4 | primer día (sin ningún retardo) | 0,097117 | +0,000688 [+0,000539, +0,000827] | 0,6959 |
+    | A5 | días 2 a 7 (sin los retardos de 7 días) | 0,094758 | −0,001671 [−0,001928, −0,001435] | 0,7079 |
+    | A5 | primer día (sin ningún retardo) | 0,095963 | −0,000465 [−0,000706, −0,000264] | 0,7008 |
+
+    - **Días 2 a 7:** A5 sigue mejorando a la base. Pierde 0,00057 respecto a A5 completo.
+    - **Primer día:**
+      - A5 sin retardos sigue siendo algo mejor que la base, gracias a las vecinas.
+      - Pero es peor que un modelo que nunca tuvo retardos: 0,095963 frente a 0,095178 de A3 (+0,00079). En entrenamiento, el `NaN` de los retardos va unido a los periodos cercanos a los huecos de datos, así que el modelo no lo trata como un simple «no sé».
+      - Solo afecta a un día de los 4 meses de la prueba v2.
+    - Por eso se mantiene el resultado secundario fijado (sin la primera semana) y no se cambia nada.
+  - Siguiente paso: la búsqueda de hiperparámetros con estas 23 features.
+
 ## Pendiente para el README
 - **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
 
