@@ -262,6 +262,9 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
       - X1 `lossguide` con 63 hojas;
       - X2 `lossguide` con 255 hojas;
       - X3 `depthwise` con profundidad 8.
+      - En `lossguide` se pone `max_depth` = 0 (sin límite; el de XGBoost por defecto es 6), para que el tamaño lo marque solo el número de hojas, como en LightGBM.
+      - Versión fijada: `xgboost==3.4.1` (`pyproject.toml`). Datos por bloques con `QuantileDMatrix` desde un `DataIter` (`src/valenbisi/modelo_xgboost.py`), que da exactamente el mismo modelo que la matriz entera (test). El modelo se guarda recortado en su mejor árbol.
+      - La estación usa su número como código de categoría. Cada partición reparte todos los códigos de 0 al máximo visto, también los que no tienen filas, así que una estación nueva con un número dentro de ese rango cae en un lado que no se aprendió de los datos. Las estaciones nuevas de la prueba v2 ya se miden aparte.
     - **Regresión logística por tramos:**
       - todas las variables como indicadores: deciles de entrenamiento, `libres` exacto de 0 a 10 y luego 11–15 y 16 o más, un tramo «falta» para los `NaN`, one-hot de la estación y hora × tipo de día;
       - `SGDClassifier` (log_loss, L2, promediado) por bloques con todas las filas, hasta 8 épocas y parada por la validación (paciencia de 1 época);
