@@ -55,8 +55,8 @@ def preparar(m, tmp_path, monkeypatch, contador: list, reanudar: bool = False, e
     monkeypatch.setattr(m, "entrenar_xgb", contar)
     monkeypatch.setattr(sys, "argv", [
         "xgboost_v2.py", "--features", str(ruta), "--salida", str(tmp_path / "resumen.json"),
-        "--predicciones", str(tmp_path / "pred"), "--modelos", str(tmp_path / "modelos"), "--minimo-libre-gb", "0",
-        *(["--reanudar"] if reanudar else []), *extra])
+        "--predicciones", str(tmp_path / "pred"), "--modelos", str(tmp_path / "modelos"), "--cache", str(tmp_path / "cache"),
+        "--minimo-libre-gb", "0", *(["--reanudar"] if reanudar else []), *extra])
 
 
 def test_busqueda_completa_con_parquet_sintetico(tmp_path, monkeypatch):
@@ -88,6 +88,7 @@ def test_busqueda_completa_con_parquet_sintetico(tmp_path, monkeypatch):
     assert contador == []
     assert set(despues["reutilizadas"]) == set(r["variantes"])
     assert despues["decisiones"]["elegida"] == d["elegida"]
+    assert not (tmp_path / "cache").exists()        # la caché de validación se borra al acabar
 
 
 def test_si_la_mejor_no_gana_claro_se_repite_tambien_la_de_partida(tmp_path, monkeypatch):
@@ -111,25 +112,14 @@ def test_si_la_mejor_no_gana_claro_se_repite_tambien_la_de_partida(tmp_path, mon
 def test_humo_mide_la_memoria_sin_escribir_nada(tmp_path, monkeypatch):
     m = cargar()
     preparar(m, tmp_path, monkeypatch, [], extra=["--humo"])
-    monkeypatch.setattr(m, "HUMO_ARBOLES", 3)
+    monkeypatch.setattr(m, "HUMO_ARBOLES", 2)
     resultado = {}
     humo_real = m.humo
     monkeypatch.setattr(m, "humo", lambda *a: resultado.update(humo_real(*a)))
     m.main()
     assert not (tmp_path / "resumen.json").exists() and not (tmp_path / "pred").exists()
-    assert resultado["filas_usadas"]["entrenamiento"] < resultado["filas_totales"]["entrenamiento"]
-    assert resultado["gb_pico_estimado_todas"] >= resultado["gb_pico"] > 0
-
-
-def test_recortar_deja_los_primeros_bloques():
-    m = cargar()
-
-    class Falsa:
-        filas_bloque = [np.arange(3), np.arange(0), np.arange(2), np.arange(4)]
-        _cache = None
-    s = m.recortar(Falsa(), 2)
-    assert [len(f) for f in s.filas_bloque] == [3, 0, 2, 0]
-    assert list(s.inicio) == [0, 3, 3, 5] and list(s.fin) == [3, 3, 5, 5]
+    assert not (tmp_path / "cache").exists()
+    assert resultado["gb_pico"] >= resultado["gb_tras_matrices"] > 0
 
 
 def test_se_para_si_el_parquet_tiene_datos_de_la_prueba_v2(tmp_path, monkeypatch):

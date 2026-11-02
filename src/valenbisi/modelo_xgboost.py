@@ -2,8 +2,14 @@
 
 - **Memoria**: el entrenamiento usa un ``QuantileDMatrix`` construido desde un
   :class:`IteradorParquet`, que pasa los bloques (row groups) uno a uno. Guarda
-  los datos ya cuantizados (≈1 byte por valor) y nunca la matriz float32 entera.
-  Validación se cuantiza con los mismos cortes (``ref``).
+  los datos ya cuantizados y nunca la matriz float32 entera. Medido con datos
+  reales: unos 0,14 GB por millón de filas (≈ 6 bytes por valor, no 1, porque
+  con NaN la matriz no es densa y cada valor guarda su índice de bin en 4
+  bytes), más unos 0,1 GB fijos.
+- Validación se cuantiza con los mismos cortes (``ref``). Con ``cache`` va a
+  disco (``ExtMemQuantileDMatrix``): solo se lee para evaluar cada árbol, así
+  que cuesta poco tiempo, y da exactamente el mismo modelo (test). En disco,
+  el entrenamiento sería unas 18 veces más lento, así que se queda en memoria.
 - **NaN**: nativos. En cada corte, XGBoost aprende a qué lado van los que faltan.
 - **Estación**: categórica nativa (``feature_types`` ``"c"``), con particiones
   por conjuntos de estaciones. El número de estación es el código de categoría,
@@ -13,6 +19,8 @@
   por defecto. Las estaciones nuevas de la prueba v2 se miden aparte.
 - Sin pesos de clase: pérdida logística tal cual, por la calibración.
 """
+
+from pathlib import Path
 
 import numpy as np
 import xgboost as xgb
@@ -46,12 +54,12 @@ def tipos(columnas: list[str]) -> list[str]:
 class IteradorParquet(xgb.DataIter):
     """Los bloques de una :class:`SecuenciaParquet` con sus etiquetas, para un ``QuantileDMatrix``."""
 
-    def __init__(self, secuencia: SecuenciaParquet, y: np.ndarray):
+    def __init__(self, secuencia: SecuenciaParquet, y: np.ndarray, cache: Path | None = None):
         self.secuencia = secuencia
         self.y = np.asarray(y, dtype=np.float32)
         self.grupos = [g for g, filas in enumerate(secuencia.filas_bloque) if len(filas)]
         self.i = 0
-        super().__init__(release_data=True)
+        super().__init__(cache_prefix=None if cache is None else str(cache), release_data=True)
 
     def next(self, input_data) -> bool:
         if self.i == len(self.grupos):
@@ -68,11 +76,21 @@ class IteradorParquet(xgb.DataIter):
 
 
 def matrices(entrenamiento: SecuenciaParquet, y_ent: np.ndarray, validacion: SecuenciaParquet,
-             y_val: np.ndarray, max_bin: int = PARAMETROS_XGB["max_bin"]) -> tuple[xgb.QuantileDMatrix, ...]:
-    """``QuantileDMatrix`` de entrenamiento y de validación (con los cortes de entrenamiento)."""
+             y_val: np.ndarray, max_bin: int = PARAMETROS_XGB["max_bin"],
+             cache: Path | None = None) -> tuple[xgb.DMatrix, xgb.DMatrix]:
+    """Matrices de entrenamiento y de validación (con los cortes de entrenamiento).
+
+    Con ``cache`` (una carpeta), la de validación va a disco ahí. La carpeta se
+    puede borrar cuando ya no se usen las matrices.
+    """
     d_ent = xgb.QuantileDMatrix(IteradorParquet(entrenamiento, y_ent), enable_categorical=True, max_bin=max_bin)
-    d_val = xgb.QuantileDMatrix(IteradorParquet(validacion, y_val), enable_categorical=True, max_bin=max_bin,
-                                ref=d_ent)
+    if cache is None:
+        d_val = xgb.QuantileDMatrix(IteradorParquet(validacion, y_val), enable_categorical=True, max_bin=max_bin,
+                                    ref=d_ent)
+    else:
+        Path(cache).mkdir(parents=True, exist_ok=True)
+        d_val = xgb.ExtMemQuantileDMatrix(IteradorParquet(validacion, y_val, Path(cache) / "validacion"),
+                                          enable_categorical=True, max_bin=max_bin, ref=d_ent)
     return d_ent, d_val
 
 

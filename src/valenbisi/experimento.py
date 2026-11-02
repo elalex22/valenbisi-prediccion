@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from sklearn.metrics import log_loss
@@ -29,6 +30,11 @@ class Fuente:
     resumen: Path
     predicciones: Path
     modelos: Path
+
+
+def codigos_de_dia(slot_utc: pd.Series) -> np.ndarray:
+    """Un entero por día local (Europe/Madrid), numerados por orden de aparición."""
+    return pd.factorize(slot_utc.dt.tz_convert(ZONA).dt.normalize())[0].astype(np.int32)
 
 
 def comprobar_sin_prueba_v2(ruta: Path) -> None:
@@ -49,7 +55,9 @@ class Experimento:
         self.y_ent = self.secuencia("entrenamiento").leer(["llena_60"])["llena_60"].to_numpy()
         contexto = self.secuencia("validacion").leer(["slot_utc", "llena", "libres", "llena_60", *FEATURES_RETARDOS])
         self.y_val = contexto["llena_60"].to_numpy()
-        self.dias = contexto["slot_utc"].dt.tz_convert(ZONA).dt.strftime("%Y-%m-%d").to_numpy()
+        # El día local de cada fila como código entero (orden de aparición), no como texto: el bootstrap
+        # da exactamente lo mismo y ocupa 0,02 GB en vez de 0,3 GB.
+        self.dias = codigos_de_dia(contexto["slot_utc"])
         con_retardos = contexto[FEATURES_RETARDOS].notna().all(axis=1).to_numpy()
         self.subgrupos = {
             "todas": np.ones(len(contexto), dtype=bool),

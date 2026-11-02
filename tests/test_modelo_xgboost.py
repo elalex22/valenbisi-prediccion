@@ -96,3 +96,16 @@ def test_se_recorta_en_el_mejor_arbol_y_el_guardado_predice_lo_mismo(tmp_path):
 def test_sin_pesos_de_clase():
     assert "scale_pos_weight" not in PARAMETROS_XGB and PARAMETROS_XGB["objective"] == "binary:logistic"
     assert PARAMETROS_XGB["min_child_weight"] == pytest.approx(50)
+
+
+def test_la_validacion_en_disco_da_el_mismo_modelo(tmp_path):
+    parquet(tmp_path / "f.parquet", n=20_000)
+    ent, val = secuencias(tmp_path / "f.parquet")
+    y_ent, y_val = etiquetas(ent), etiquetas(val)
+    en_memoria = entrenar_xgb(*matrices(ent, y_ent, val, y_val), PARAMS, max_arboles=200, paciencia=10, registro=0)
+    d_ent, d_val = matrices(ent, y_ent, val, y_val, cache=tmp_path / "cache")
+    assert isinstance(d_val, xgb.ExtMemQuantileDMatrix) and any((tmp_path / "cache").iterdir())
+    en_disco = entrenar_xgb(d_ent, d_val, PARAMS, max_arboles=200, paciencia=10, registro=0)
+    assert en_disco.attr("rondas_entrenadas") == en_memoria.attr("rondas_entrenadas")
+    assert en_disco.num_boosted_rounds() == en_memoria.num_boosted_rounds()
+    np.testing.assert_array_equal(predecir_xgb(en_disco, val), predecir_xgb(en_memoria, val))

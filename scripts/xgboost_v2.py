@@ -18,8 +18,11 @@ a X1 solo si mejora más del doble de ese ruido y el intervalo al 95 % (bootstra
 por días) de la diferencia pareada excluye el 0. Si se queda X1 sin ser la de
 menor logloss, también se repite X1 con la semilla 43.
 
-Las matrices (QuantileDMatrix por bloques del Parquet) se construyen una vez y
-sirven para todas las configuraciones. Guarda las predicciones de validación en
+Las matrices se construyen una vez, por bloques del Parquet, y sirven para todas
+las configuraciones: la de entrenamiento en memoria (QuantileDMatrix) y la de
+validación en disco (ExtMemQuantileDMatrix, en data/processed/cache_xgboost/,
+que se borra al acabar). Las dos dan exactamente el mismo modelo que en memoria
+(test); la de validación en disco ahorra ~0,5 GB y cuesta ~0,3 s por árbol. Guarda las predicciones de validación en
 data/processed/modelos_v2/, los modelos (recortados en su mejor árbol) en
 models/modelos_v2/ y data/processed/resumen_xgboost_v2.json, actualizado tras
 cada paso. Vigila la RAM y evita la suspensión.
@@ -27,9 +30,10 @@ cada paso. Vigila la RAM y evita la suspensión.
 Con --reanudar, reutiliza los entrenamientos idénticos (columnas en el mismo
 orden, semilla, parámetros y parada temprana) del resumen anterior.
 
-Con --humo, solo mide la memoria con los 2 primeros bloques de entrenamiento y
-de validación y 20 árboles de X2, y estima el pico con todas las filas. No
-escribe ningún resumen, predicción ni modelo.
+Con --humo, mide la memoria real con todas las filas: prepara todo como la
+ejecución completa (etiquetas, días, subgrupos y las dos matrices) y entrena 5
+árboles de X2. No escribe ningún resumen, predicción ni modelo. Si no cabe, se
+para por el mínimo de RAM libre, como la ejecución completa.
 
 Uso (desde la raíz del proyecto):
     .venv\\Scripts\\python scripts\\xgboost_v2.py --humo
@@ -37,20 +41,17 @@ Uso (desde la raíz del proyecto):
 """
 
 import argparse
-import copy
 import gc
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
-import numpy as np
 import xgboost as xgb
 
-from valenbisi.evaluacion import FRONTERAS_V2, limites
-from valenbisi.experimento import Experimento, comprobar_sin_prueba_v2
-from valenbisi.features_v2 import FEATURES_V2_FINALES
+from valenbisi.experimento import Experimento
 from valenbisi.memoria import comprobar_memoria, evitar_suspension, memoria_libre_gb, memoria_proceso_gb
-from valenbisi.modelo import SecuenciaParquet
 from valenbisi.modelo_xgboost import PARAMETROS_XGB, VigilarMemoria, entrenar_xgb, matrices, predecir_xgb
 from valenbisi.reanudar import clave
 from valenbisi.seleccion import elegir_configuracion
@@ -66,8 +67,7 @@ PARTIDA = "X1"
 MAX_ARBOLES = 3000
 PACIENCIA = 100
 REPLICAS = 200
-HUMO_BLOQUES = 2
-HUMO_ARBOLES = 20
+HUMO_ARBOLES = 5
 
 
 def parametros(nombre: str) -> dict:
@@ -80,18 +80,28 @@ def memoria() -> str:
 
 
 class Entrenamientos:
-    def __init__(self, exp: Experimento, minimo_libre_gb: float):
+    def __init__(self, exp: Experimento, minimo_libre_gb: float, cache: Path):
         self.exp = exp
         self.minimo_libre_gb = minimo_libre_gb
-        self.datos: tuple[xgb.QuantileDMatrix, xgb.QuantileDMatrix] | None = None
+        self.cache = cache
+        self.datos: tuple[xgb.DMatrix, xgb.DMatrix] | None = None
 
-    def preparar(self) -> tuple[xgb.QuantileDMatrix, xgb.QuantileDMatrix]:
+    def preparar(self) -> tuple[xgb.DMatrix, xgb.DMatrix]:
         if self.datos is None:
             inicio = time.monotonic()
+            shutil.rmtree(self.cache, ignore_errors=True)
             self.datos = matrices(self.exp.secuencia("entrenamiento"), self.exp.y_ent,
-                                  self.exp.secuencia("validacion"), self.exp.y_val, PARAMETROS_XGB["max_bin"])
+                                  self.exp.secuencia("validacion"), self.exp.y_val, PARAMETROS_XGB["max_bin"],
+                                  cache=self.cache)
+            gc.collect()
             print(f"  matrices listas en {time.monotonic() - inicio:.0f} s ({memoria()})", flush=True)
         return self.datos
+
+    def cerrar(self) -> None:
+        """Libera las matrices y borra la caché de validación (en Windows, solo se puede tras liberarlas)."""
+        self.datos = None
+        gc.collect()
+        shutil.rmtree(self.cache, ignore_errors=True)
 
     def variante(self, nombre: str, config: str, semilla: int) -> None:
         params = parametros(config)
@@ -123,47 +133,29 @@ class Entrenamientos:
         gc.collect()
 
 
-def recortar(secuencia: SecuenciaParquet, bloques: int) -> SecuenciaParquet:
-    """La misma secuencia, pero solo con sus ``bloques`` primeros bloques no vacíos."""
-    s = copy.copy(secuencia)
-    usados = [g for g, f in enumerate(secuencia.filas_bloque) if len(f)][:bloques]
-    s.filas_bloque = [f if g in usados else f[:0] for g, f in enumerate(secuencia.filas_bloque)]
-    s.fin = np.cumsum([len(f) for f in s.filas_bloque])
-    s.inicio = s.fin - [len(f) for f in s.filas_bloque]
-    s._cache = None
-    return s
-
-
-def humo(features: Path, minimo_libre_gb: float) -> dict:
-    """Memoria con unos pocos bloques reales y estimación del pico con todas las filas (no escribe nada)."""
-    comprobar_sin_prueba_v2(features)
-    base = memoria_proceso_gb()[0]
-    sec = {c: SecuenciaParquet(features, FEATURES_V2_FINALES, limites(c, FRONTERAS_V2))
-           for c in ("entrenamiento", "validacion")}
-    total = {c: len(s) for c, s in sec.items()}
-    sec = {c: recortar(s, HUMO_BLOQUES) for c, s in sec.items()}
-    y = {c: s.leer(["llena_60"])["llena_60"].to_numpy() for c, s in sec.items()}
-    usadas = {c: len(s) for c, s in sec.items()}
-    inicio = time.monotonic()
-    d_ent, d_val = matrices(sec["entrenamiento"], y["entrenamiento"], sec["validacion"], y["validacion"])
-    tras_matrices = memoria_proceso_gb()[0]
-    print(f"  matrices de {usadas['entrenamiento']:,} + {usadas['validacion']:,} filas en "
-          f"{time.monotonic() - inicio:.0f} s ({memoria()})".replace(",", "."), flush=True)
-    inicio = time.monotonic()
-    xgb.train({**parametros("X2"), "seed": 42}, d_ent, num_boost_round=HUMO_ARBOLES,
-              evals=[(d_val, "validacion")], verbose_eval=False, callbacks=[VigilarMemoria(minimo_libre_gb, cada=1)])
-    segundos_arbol = (time.monotonic() - inicio) / HUMO_ARBOLES
-    pico = memoria_proceso_gb()[1]
-    escala = (total["entrenamiento"] + total["validacion"]) / (usadas["entrenamiento"] + usadas["validacion"])
-    estimado = base + (pico - base) * escala
-    resultado = {"filas_usadas": usadas, "filas_totales": total, "gb_base": round(base, 2),
-                 "gb_tras_matrices": round(tras_matrices, 2), "gb_pico": round(pico, 2),
-                 "gb_pico_estimado_todas": round(estimado, 2),
-                 "segundos_por_arbol_estimado_todas": round(segundos_arbol * total["entrenamiento"]
-                                                            / usadas["entrenamiento"], 2)}
-    print(f"\nPico con {HUMO_BLOQUES} bloques: {pico:.2f} GB (base {base:.2f}). Estimado con todas las filas "
-          f"(lineal, por lo alto): {estimado:.1f} GB; unos {resultado['segundos_por_arbol_estimado_todas']:.1f} s "
-          f"por árbol de X2. Equipo: {memoria_libre_gb():.1f} GB libres.", flush=True)
+def humo(features: Path, minimo_libre_gb: float, cache: Path) -> dict:
+    """Memoria real con todas las filas: lo mismo que la ejecución completa y 5 árboles de X2 (no escribe nada)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        exp = Experimento(features, tmp / "resumen.json", tmp / "pred", tmp / "modelos", replicas=REPLICAS)
+        tras_experimento = memoria_proceso_gb()[0]
+        print(f"  etiquetas, días y subgrupos: {tras_experimento:.2f} GB ({memoria()})", flush=True)
+        entrenamientos = Entrenamientos(exp, minimo_libre_gb, cache)
+        d_ent, d_val = entrenamientos.preparar()
+        tras_matrices = memoria_proceso_gb()[0]
+        inicio = time.monotonic()
+        xgb.train({**parametros("X2"), "seed": 42}, d_ent, num_boost_round=HUMO_ARBOLES,
+                  evals=[(d_val, "validacion")], verbose_eval=False,
+                  callbacks=[VigilarMemoria(minimo_libre_gb, cada=1)])
+        segundos_arbol = (time.monotonic() - inicio) / HUMO_ARBOLES
+        actual, pico = memoria_proceso_gb()
+        del d_ent, d_val
+        entrenamientos.cerrar()
+    resultado = {"gb_tras_experimento": round(tras_experimento, 2), "gb_tras_matrices": round(tras_matrices, 2),
+                 "gb_tras_arboles": round(actual, 2), "gb_pico": round(pico, 2),
+                 "segundos_por_arbol_x2": round(segundos_arbol, 2)}
+    print(f"\nPico real con todas las filas: {pico:.2f} GB (tras las matrices {tras_matrices:.2f} GB). "
+          f"{segundos_arbol:.1f} s por árbol de X2. Equipo: {memoria_libre_gb():.1f} GB libres.", flush=True)
     return resultado
 
 
@@ -173,6 +165,8 @@ def main() -> None:
     parser.add_argument("--salida", type=Path, default=PROCESADOS / "resumen_xgboost_v2.json")
     parser.add_argument("--predicciones", type=Path, default=PROCESADOS / "modelos_v2")
     parser.add_argument("--modelos", type=Path, default=RAIZ / "models" / "modelos_v2")
+    parser.add_argument("--cache", type=Path, default=PROCESADOS / "cache_xgboost",
+                        help="carpeta temporal de la matriz de validación en disco (se borra al acabar)")
     parser.add_argument("--minimo-libre-gb", type=float, default=1.5,
                         help="RAM libre del equipo por debajo de la cual el script se para")
     parser.add_argument("--reanudar", action="store_true",
@@ -183,7 +177,7 @@ def main() -> None:
     evitar_suspension()
     comprobar_memoria(args.minimo_libre_gb)
     if args.humo:
-        humo(args.features, args.minimo_libre_gb)
+        humo(args.features, args.minimo_libre_gb, args.cache)
         return
     inicio = time.monotonic()
 
@@ -191,7 +185,7 @@ def main() -> None:
                       replicas=REPLICAS)
     print(f"Entrenamiento {len(exp.y_ent):,} filas, validación {len(exp.y_val):,} ({memoria()})".replace(",", "."),
           flush=True)
-    entrenamientos = Entrenamientos(exp, args.minimo_libre_gb)
+    entrenamientos = Entrenamientos(exp, args.minimo_libre_gb, args.cache)
     d = exp.resumen["decisiones"]
 
     for nombre in CONFIGURACIONES:
@@ -212,6 +206,7 @@ def main() -> None:
     d.update({"mejor_logloss": mejor, "elegida": elegida, "parametros_elegidos": parametros(elegida),
               "arboles_elegida": exp.resumen["variantes"][elegida]["arboles"],
               "ruido_semilla_elegida": abs(exp.logloss(elegida) - exp.logloss(f"{elegida}_s43"))})
+    entrenamientos.cerrar()
     d["segundos_total"] = round(time.monotonic() - inicio)
     exp.guardar()
 
