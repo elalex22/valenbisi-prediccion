@@ -264,12 +264,14 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
       - X3 `depthwise` con profundidad 8.
     - **Regresión logística por tramos:**
       - todas las variables como indicadores: deciles de entrenamiento, `libres` exacto de 0 a 10 y luego 11–15 y 16 o más, un tramo «falta» para los `NaN`, one-hot de la estación y hora × tipo de día;
-      - `SGDClassifier` (log_loss, L2, promediado) por bloques con todas las filas, hasta 8 épocas y parada por la validación;
+      - `SGDClassifier` (log_loss, L2, promediado) por bloques con todas las filas, hasta 8 épocas y parada por la validación (paciencia de 1 época);
+      - **paso constante `eta0` = 0,01** (`src/valenbisi/logistica.py`), fijado con datos inventados antes de ejecutar. El paso por defecto de scikit-learn («optimal», 1/(alpha·t)) da pasos enormes al principio cuando `alpha` es pequeño, y el promedio los arrastra: con 200.000 filas inventadas y `alpha` = 1e-6, quedaba a +0,29 de logloss de la solución exacta tras 8 épocas; con el paso constante, a menos de 0,001 desde la primera. Un test lo compara con `LogisticRegression` sobre la matriz entera;
       - `alpha` de 1e-5 (R1) o de 1e-6 (R2).
   - **Métrica**: la logloss de validación en todas las filas. Las demás medidas (AUC-PR, Brier skill y subgrupos) se documentan, pero no deciden.
   - **Ruido** de un modelo: |logloss con la semilla 42 − con la semilla 43| de su configuración elegida.
     - En LightGBM es el de A5/A5b: 0,000064.
     - En XGBoost y en la logística, la configuración de menor logloss se repite con la semilla 43. En la logística, la semilla solo cambia el barajado.
+    - Si la de partida se queda sin ser la de menor logloss, también se repite con la semilla 43, para tener el ruido de la configuración elegida.
   - **Una diferencia es clara** si:
     - supera el doble del ruido mayor de los dos modelos comparados, **y**
     - el intervalo al 95 % de la diferencia pareada excluye el 0 (bootstrap por días, 200 réplicas).
