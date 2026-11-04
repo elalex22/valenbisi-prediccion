@@ -305,3 +305,13 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Entrenar LightGBM necesita unos 3,7 GB libres al empezar (2,2 GB de pico más el margen). Con Chrome muy cargado puede no llegar.
   - Los scripts largos llaman a `evitar_suspension()` (`memoria.py`) para que el equipo no se suspenda a mitad.
 - La prueba ya se usó para el resultado final (2026-10-29). No se vuelve a usar para tomar decisiones: cualquier cambio de modelo posterior necesitaría datos nuevos para evaluarse.
+
+## Modo didáctico (fase de producción / MLOps)
+
+Cuando empecemos cada pieza nueva de producción (recogida automática, reentrenamiento, monitorización, mapa web):
+
+1. Explicar primero el concepto sin código: qué problema resuelve y qué pasaría si no existiera.
+2. Hacer una versión manual mínima que yo ejecute y mire antes de automatizar nada.
+3. No automatizar hasta que yo confirme que entiendo el paso manual.
+4. Provocar fallos a propósito (API caída, dato raro, modelo nuevo peor) y ver cómo responde el sistema.
+5. Cerrar cada pieza pidiéndome un resumen de 2-3 frases con mis palabras; si no me sale, repasar.
