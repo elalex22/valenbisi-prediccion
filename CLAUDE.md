@@ -57,7 +57,8 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - Meteorología (`src/valenbisi/tiempo.py`): `tmed`, `tmin`, `tmax`, `prec` y `sol` **del día local anterior**, con el sufijo `_ayer`. El dato del mismo día sería una fuga, porque incluye horas que aún no han pasado. `"Ip"` se convierte en 0,05 mm.
     - Siguen en el Parquet (`FEATURES` en `features.py` son las 20 candidatas), pero **el modelo oficial no las usa** (ver la ablación).
   - Un test de fuga cambia y borra las fotos posteriores a t y comprueba que las features de t no cambian.
-- **Festivos** (`src/valenbisi/calendario.py`): tabla escrita a mano con los nacionales, autonómicos y locales de València (2022-12 a 2025-12), revisada.
+- **Festivos** (`src/valenbisi/calendario.py`): tabla escrita a mano con los nacionales, autonómicos y locales de València (2022-12 a 2026-12), revisada.
+  - 2026 sale del Decreto 100/2025 del Consell (DOGV 10145). Los locales de 2026 (22-01 y 13-04) no están confirmados en fuente oficial, pero caen antes de los datos de ese año (desde el 29-06). En la prueba v2 caen el 15-08, el 09-10 y el 12-10.
   - El 26-12-2022 no es festivo: el decreto autonómico lo cambió por el 24-06.
   - El 24-06 «recuperable» de 2024 y 2025 cuenta como festivo, porque no se trabaja.
   - El 24-04-2023 (traslado de San Vicente Mártir) cuenta como festivo, pero **no está confirmado en fuente oficial**: solo sale en prensa y en calendarios de terceros.
@@ -319,6 +320,20 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - **Referencias**: constante, persistencia, frecuencia y tabla por libres, ajustadas con entrenamiento + validación v2.
   - **Comparación con la v1**: LightGBM con las 15 features de `FEATURES_MODELO`, reentrenado con los mismos datos y **1510 árboles fijos** (los de A0).
   - El periodo, el resultado secundario y las estaciones nuevas son los fijados en «Prueba v2: decisiones fijadas antes de mirarla».
+
+- **Evaluación final v2: método fijado antes de ejecutar** (aprobado el 2026-11-05; `scripts/evaluacion_final_v2.py`, sin ejecutar; la prueba v2 no se ha leído nunca):
+  - **Métricas**: AUC-PR, Brier skill, logloss (fue la métrica de decisión) y calibración por tramos y por mes. Intervalos al 95 % por bootstrap de días, con 200 réplicas y semilla 0, para cada modelo y para la diferencia de LightGBM v2 con cada uno.
+  - **Modelos comparados**: LightGBM v2, LightGBM v1 de 15 features, persistencia, frecuencia, tabla por libres y constante (la constante, sin intervalo). Todos se ajustan con entrenamiento + validación v2, y la constante del Brier skill sale de esos datos.
+  - **Grupos**: todas las filas, llena ahora / no, tramos de libres, con los 4 retardos / con algún `NaN`. Los mismos con el resultado principal y el secundario. Las estaciones nuevas, aparte, con métricas si tienen al menos 30 positivos.
+  - **Frente a la v1**: se aplica la regla de «diferencia clara» a la logloss (mejora de más de 0,000128, el doble del ruido de A5, con el intervalo sin el 0). Se documenta; no cambia ninguna decisión.
+  - **Orden**: primero las referencias y los dos modelos, guardados en disco, y solo después se abre el clon. Filtra zips y fotos por fecha, y los pasa por la misma limpieza, etiqueta y features (`src/valenbisi/prueba_v2.py`), escribiendo en `data/processed/prueba_v2/`. Los Parquet de desarrollo no se tocan.
+  - **Fechas**: los zips del 25-09-2025 al 29-10-2026 y las fotos anteriores a la medianoche local del 29-10-2026. Una fila entra solo si su t+60 también es anterior a esa medianoche.
+  - **Estaciones nuevas**: buscan vecinas entre las conocidas, pero no pasan a ser vecinas de ninguna; las conocidas conservan sus coordenadas.
+  - **Retardos**: solo se buscan entre las fotos del propio periodo. El script se para si los datos empiezan a menos de 7 días de la última foto de desarrollo.
+  - **Salvaguardas**: exige `--confirmar-prueba`, el árbol limpio y un commit posterior a `v2-congelado`. Si ya existe el resumen, se niega. Tras un error de código se repite con `--repetir-por-error`, que queda anotado en el resumen, y se documenta. Los modelos ya guardados se reutilizan.
+  - **Aviso sobre la logloss de la frecuencia**: algunas celdas predicen exactamente 0. En validación v2 (ajustada con entrenamiento) son 459.696 filas con 1032 positivos, y su logloss sube a 0,1819, frente a 0,1771 si se limita a p ≥ 1e-5. No se corrige: se publica tal cual y con este aviso. La tabla por libres y la persistencia no predicen 0, y la comparación con la v1 no se ve afectada.
+  - **Ensayo** (`scripts/ensayo_evaluacion_v2.py`, solo `valenbici-master`, nunca el clon): pasa ago–sep 2025, ya usados como validación, por la misma cadena. Las 23 features de 1.178.961 filas son idénticas al Parquet, las predicciones de A5 coinciden (diferencia máxima 3e-08) y las decisiones congeladas coinciden con los resúmenes. Tarda 115 s.
+  - **Datos inventados** (`tests/test_evaluacion_final_v2.py`): recorren la evaluación completa. Comprueban el periodo, la hora repetida, las estaciones nuevas, un zip fuera de rango que no se abre, los modelos guardados antes de abrir el clon, y que una repetición da lo mismo.
 
 ## Pendiente para el README
 - **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
