@@ -58,11 +58,11 @@ def escribir_zip(ruta: Path, fotos: list[tuple[str, str]]) -> Path:
     return ruta
 
 
-def parquet_features_v2(ruta: Path) -> None:
+def parquet_features_v2(ruta: Path, frecuencia: str = "6h") -> None:
     """Parquet de features v2 inventado: dic-2024 a may-2025 (entrenamiento hasta feb, validación
-    desde mar), 4 slots al día y 4 estaciones, con un 10 % de retardos NaN."""
+    desde mar), con un slot cada ``frecuencia`` y 4 estaciones, y un 10 % de retardos NaN."""
     rng = np.random.default_rng(0)
-    slots = pd.date_range("2024-12-01", "2025-05-31 23:00", freq="6h", tz="Europe/Madrid").tz_convert("UTC")
+    slots = pd.date_range("2024-12-01", "2025-05-31 23:00", freq=frecuencia, tz="Europe/Madrid").tz_convert("UTC")
     df = pd.DataFrame([(s, e) for s in slots for e in range(1, 5)], columns=["slot_utc", "estacion"])
     n = len(df)
     for c in FEATURES_V2:
