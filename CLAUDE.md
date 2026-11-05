@@ -292,6 +292,34 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - El LightGBM de 15 features de la v1 con el reparto v2 (A0) se compara con el ganador para medir cuánto aporta la v2, pero no decide nada.
   - Lo elegido se fija después en «Decisiones v2 congeladas», con la etiqueta `v2-congelado`, antes de abrir la prueba v2.
 
+- **Resultado de la comparación de modelos v2** (`scripts/comparar_modelos_v2.py` desde el commit `8796e8e`, sin entrenar → `data/processed/resumen_comparacion_modelos_v2.json`; resúmenes por modelo en `resumen_lightgbm_v2.json`, `resumen_xgboost_v2.json` y `resumen_logistica_v2.json`). Solo validación v2.
+  - **Dentro de cada modelo** se quedan las configuraciones L0 (= A5), X1 y R1:
+    - LightGBM: la de menor logloss es L1 (0,094167), pero frente a L0 da −0,000021 [−0,000074, +0,000024], así que no es una mejora clara.
+    - XGBoost: X1 ya es la de menor logloss. X2 − X1 = +0,000149 [+0,000099, +0,000205].
+    - Logística: R1 ya es la de menor logloss. R2 − R1 = +0,000133 [+0,000107, +0,000161].
+  - **Entre modelos** (semilla 42):
+
+    | Modelo | Árboles | Logloss | AUC-PR | Skill | Ruido de semilla | Tiempo |
+    |---|---|---|---|---|---|---|
+    | Logística R1 | — | 0,108741 | 0,6094 | 0,4207 | 0,000019 | 348 s |
+    | **LightGBM A5** | 1557 | 0,094188 | 0,7111 | 0,4873 | 0,000064 | 1268 s |
+    | XGBoost X1 | 1437 | 0,094179 | 0,7116 | 0,4874 | 0,000031 | 3837 s |
+
+    - A5 − R1 = −0,014553 [−0,015195, −0,013802]: mejora clara, LightGBM sustituye a la logística.
+    - X1 − A5 = −0,000009 [−0,000050, +0,000040], con un umbral de 0,000128: **empate, gana LightGBM por ser más sencillo**.
+  - **No deciden:**
+    - Con la semilla 43, X1 − A5 cambia de signo: +0,000025 [−0,000025, +0,000074].
+    - En «no llena ahora», +0,000016 [−0,000027, +0,000060]. En libres 1–6, +0,000163 [+0,000002, +0,000324].
+    - Frente a A0 (15 features de la v1), A5 mejora 0,002241 [0,002036, 0,002484] y X1 0,002249 [0,002039, 0,002465]: lo que aporta la v2 viene de las nuevas variables, no del algoritmo.
+  - **El tiempo no forma parte de la regla** y los de la tabla no son del todo comparables: el de A5 incluye construir los datos, el de X1 no incluye construir las matrices, y se midieron en sesiones distintas. X1 tarda unas 3 veces más, como mínimo.
+
+- **Decisiones v2 congeladas** (aprobadas el 2026-11-05, etiqueta git `v2-congelado`; la prueba v2 no se ha leído nunca):
+  - **Modelo**: LightGBM A5, con las 23 features de `FEATURES_V2_FINALES`, los `PARAMETROS` de la v1 y la semilla 42.
+  - **Resultado principal**: reentrenado con entrenamiento + validación v2, sin parada temprana y con **1557 árboles fijos**.
+  - **Referencias**: constante, persistencia, frecuencia y tabla por libres, ajustadas con entrenamiento + validación v2.
+  - **Comparación con la v1**: LightGBM con las 15 features de `FEATURES_MODELO`, reentrenado con los mismos datos y **1510 árboles fijos** (los de A0).
+  - El periodo, el resultado secundario y las estaciones nuevas son los fijados en «Prueba v2: decisiones fijadas antes de mirarla».
+
 ## Pendiente para el README
 - **Límite de Open-Meteo (ejemplo de la DANA):** el 29-10-2024, el reanálisis da 105 mm de lluvia en València y la estación de AEMET 8416 solo 1,3 mm. La celda de ~25 km incluye la zona del sur donde cayó la lluvia extrema. Ilustra que la lluvia de reanálisis en un punto es ruidosa a escala de ciudad: detecta el 71 % de los días con ≥1 mm de AEMET, y la mitad de los días en que marca lluvia AEMET no registra nada. La temperatura, en cambio, es fiable (correlación de 0,98–0,99).
 
