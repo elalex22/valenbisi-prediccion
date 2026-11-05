@@ -80,6 +80,7 @@ def construir_dataset(
     carpeta_salida: Path,
     progreso: Callable[[int, int], None] | None = None,
     filas_por_bloque: int = 500_000,
+    rango_local: tuple[pd.Timestamp, pd.Timestamp] | None = None,
 ) -> dict:
     """Lee todos los zips, aplica las reglas de limpieza y escribe en ``carpeta_salida``:
 
@@ -89,8 +90,16 @@ def construir_dataset(
 
     Procesa zip a zip en orden cronológico y escribe sobre la marcha, así que
     en memoria solo hay un zip (y un bloque pendiente de escribir) a la vez.
+
+    Con ``rango_local`` (desde incluido, hasta excluido; hora local sin zona) solo
+    se abren los zips cuyo nombre cae en esas fechas y solo se quedan sus fotos de
+    ese rango. Se filtra por ``ts``, no por ``ts_utc``, para que la hora repetida
+    de octubre siga llegando a las reglas y se cuente.
     """
     zips = zips_en_orden(carpeta_raw)
+    if rango_local is not None:
+        desde, hasta = rango_local
+        zips = [z for z in zips if desde.normalize() <= pd.to_datetime(z.stem, format="%d-%m-%Y") <= hasta]
     carpeta_salida = Path(carpeta_salida)
     carpeta_salida.mkdir(parents=True, exist_ok=True)
 
@@ -107,6 +116,8 @@ def construir_dataset(
     try:
         for i, ruta in enumerate(zips, start=1):
             df, info = leer_zip(ruta)
+            if rango_local is not None:
+                df = df[(df["ts"] >= desde) & (df["ts"] < hasta)]
             for clave in info_total:
                 info_total[clave] += info[clave]
             if not df.empty:

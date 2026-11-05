@@ -150,12 +150,18 @@ class SecuenciaParquet(lgb.Sequence):
         return self.bloque(g)[indice - self.inicio[g]].astype(np.float64)
 
 
-def dataset_por_lotes(secuencia: SecuenciaParquet, y: np.ndarray,
+def dataset_por_lotes(secuencia: SecuenciaParquet | list[SecuenciaParquet], y: np.ndarray,
                       referencia: lgb.Dataset | None = None) -> lgb.Dataset:
-    """Como :func:`dataset`, pero leyendo las filas de ``secuencia`` por bloques."""
+    """Como :func:`dataset`, pero leyendo las filas de ``secuencia`` por bloques.
+
+    Con una lista, usa sus filas seguidas: para entrenar con entrenamiento +
+    validación sin las filas del hueco entre los dos.
+    """
+    secuencias = secuencia if isinstance(secuencia, list) else [secuencia]
+    columnas = secuencias[0].columnas
     datos = lgb.Dataset(
-        [secuencia], label=y, feature_name=secuencia.columnas,
-        categorical_feature=[c for c in CATEGORICAS if c in secuencia.columnas],
+        secuencias, label=y, feature_name=columnas,
+        categorical_feature=[c for c in CATEGORICAS if c in columnas],
         reference=referencia, params={"max_bin": PARAMETROS["max_bin"], "verbose": -1},
     )
     return datos.construct()

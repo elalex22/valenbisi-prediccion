@@ -106,3 +106,14 @@ def test_sin_fuga_cambiar_el_futuro_de_cualquier_estacion_no_cambia_las_features
     siguiente = lambda d: d[d["slot_utc"] == corte + pd.Timedelta(hours=1)].reset_index(drop=True)  # noqa: E731
     for columna in ("vec_ocupacion", "temp"):
         assert not siguiente(antes)[columna].equals(siguiente(despues)[columna]), columna
+
+
+def test_features_finales_coinciden_con_las_de_la_construccion_completa():
+    from valenbisi.features_v2 import FEATURES_V2_FINALES, features_finales_v2
+
+    df = serie(9).assign(llena_60=False)
+    finales = features_finales_v2(df, preparar_referencia(df), preparar_rejilla(df),
+                                  vecinas_mas_cercanas(ESTACIONES, k=2), ESTACIONES)
+    assert list(finales.columns) == ["slot_utc", *FEATURES_V2_FINALES, "llena_60"]
+    completas = construir(df, 9)
+    pd.testing.assert_frame_equal(finales, completas[finales.columns])

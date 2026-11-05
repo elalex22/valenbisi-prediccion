@@ -139,3 +139,22 @@ def test_dataset_por_lotes_da_el_mismo_modelo_que_la_matriz(tmp_path):
     obtenido = predecir_por_lotes(por_lotes, s_val, num_iteration=por_lotes.best_iteration)
     assert len(obtenido) == len(validacion)
     assert np.allclose(obtenido, esperado, rtol=0, atol=1e-12)
+
+
+def test_dataset_por_lotes_con_dos_secuencias_equivale_a_sus_filas_seguidas(tmp_path):
+    ruta, df = parquet_por_bloques(tmp_path)
+    c1, c2 = df["slot_utc"].iloc[3_000], df["slot_utc"].iloc[4_000]
+    parametros = {"objective": "binary", "learning_rate": 0.1, "num_leaves": 7, "min_data_in_leaf": 50,
+                  "num_threads": 2, "seed": 0, "verbose": -1}
+    # Dos trozos separados por un hueco, como entrenamiento y validación.
+    filas = df[(df["slot_utc"] < c1) | (df["slot_utc"] >= c2)]
+    d = dataset(filas[COLUMNAS].to_numpy("float32"), filas["llena_60"].to_numpy(), COLUMNAS)
+    con_matriz = entrenar_fijo(d, 30, parametros)
+
+    secuencias = [SecuenciaParquet(ruta, COLUMNAS, [("slot_utc", "<", c1)], batch_size=333),
+                  SecuenciaParquet(ruta, COLUMNAS, [("slot_utc", ">=", c2)], batch_size=333)]
+    y = np.concatenate([s.leer(["llena_60"])["llena_60"].to_numpy() for s in secuencias])
+    por_lotes = entrenar_fijo(dataset_por_lotes(secuencias, y), 30, parametros)
+
+    X = df[COLUMNAS].to_numpy("float32")
+    np.testing.assert_allclose(con_matriz.predict(X), por_lotes.predict(X), atol=1e-9)

@@ -107,3 +107,20 @@ def test_formatear_resumen_usa_punto_para_los_miles():
     }
     texto = formatear_resumen(resumen)
     assert "24.959.284" in texto and "91.989" in texto
+
+
+def test_rango_local_no_abre_otros_zips_y_conserva_la_hora_repetida(carpeta_raw, tmp_path):
+    (carpeta_raw / "20-10-2026.zip").write_bytes(b"no es un zip: fuera del rango, no se abre")
+    fila = [(1, "T", 5, 10, 15, "25/10/2026 01:55:00")]
+    escribir_zip(carpeta_raw / "25-10-2026.zip", [
+        (nombre_foto("24-10-2026", "23-45-01"), csv_nuevo(fila)),     # antes del rango
+        (nombre_foto("25-10-2026", "00-00-01"), csv_nuevo(fila)),
+        (nombre_foto("25-10-2026", "02-30-01"), csv_nuevo([(1, "T", 6, 9, 15, "25/10/2026 02:25:00")])),  # repetida
+        (nombre_foto("25-10-2026", "03-00-01"), csv_nuevo([(1, "T", 7, 8, 15, "25/10/2026 02:55:00")])),
+        (nombre_foto("26-10-2026", "00-00-01"), csv_nuevo([(1, "T", 8, 7, 15, "25/10/2026 23:55:00")])),  # el fin no entra
+    ])
+    resumen = construir_dataset(carpeta_raw, tmp_path / "salida",
+                                rango_local=(pd.Timestamp("2026-10-25"), pd.Timestamp("2026-10-26")))
+    datos = pd.read_parquet(tmp_path / "salida" / "valenbisi_limpio.parquet")
+    assert datos["ts"].dt.strftime("%d %H:%M").tolist() == ["25 00:00", "25 03:00"]
+    assert resumen["zips"] == 1
