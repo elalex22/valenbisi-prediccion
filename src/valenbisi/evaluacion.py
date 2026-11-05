@@ -25,6 +25,10 @@ FRONTERAS_V2 = {
     "validacion": pd.Timestamp("2025-03-01", tz=ZONA).tz_convert("UTC"),
     "prueba": pd.Timestamp("2025-09-25", tz=ZONA).tz_convert("UTC"),
 }
+# Fin de la prueba v2 (último día completo: el 28-10-2026) y primer día del resultado
+# secundario, sin la semana en que faltan los retardos (CLAUDE.md).
+FIN_PRUEBA_V2 = pd.Timestamp("2026-10-29", tz=ZONA).tz_convert("UTC")
+INICIO_SECUNDARIO_V2 = pd.Timestamp("2026-07-06", tz=ZONA).tz_convert("UTC")
 
 
 def repartir(df: pd.DataFrame, fronteras: dict[str, pd.Timestamp] = FRONTERAS) -> tuple[dict[str, pd.DataFrame], dict]:
@@ -78,7 +82,7 @@ def limites_union(nombres: list[str], fronteras: dict[str, pd.Timestamp] = FRONT
 
 
 def metricas(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, p_constante: float) -> dict:
-    """AUC-PR, Brier y Brier skill score de las probabilidades ``p`` frente a la realidad ``y``.
+    """AUC-PR, Brier, Brier skill score y logloss de las probabilidades ``p`` frente a la realidad ``y``.
 
     ``p_constante`` es la proporción de positivos de entrenamiento: el Brier de
     predecirla siempre es el suelo con el que se compara (skill score 0).
@@ -94,6 +98,7 @@ def metricas(y: pd.Series | np.ndarray, p: pd.Series | np.ndarray, p_constante: 
         "auc_pr": round(average_precision_score(y, p), 4),
         "brier": round(brier, 5),
         "brier_skill": round(1 - brier / brier_constante, 4),
+        "logloss": round(log_loss(y, p, labels=[False, True]), 6),
     }
 
 

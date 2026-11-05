@@ -65,7 +65,7 @@ def test_ninguna_etiqueta_cae_en_el_conjunto_siguiente():
 def test_metricas_de_una_prediccion_perfecta():
     y = [True, False, False, False]
     m = metricas(y, [1.0, 0.0, 0.0, 0.0], p_constante=0.25)
-    assert m == {"filas": 4, "porcentaje_positivos": 25.0, "auc_pr": 1.0, "brier": 0.0, "brier_skill": 1.0}
+    assert m == {"filas": 4, "porcentaje_positivos": 25.0, "auc_pr": 1.0, "brier": 0.0, "brier_skill": 1.0, "logloss": 0.0}
 
 
 def test_metricas_de_la_constante_no_aportan_nada():
