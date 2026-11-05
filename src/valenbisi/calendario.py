@@ -19,6 +19,9 @@ from valenbisi.evaluacion import ZONA
 #   calendarios de terceros); se cuenta como festivo igualmente.
 # - 2024: Decreto 164/2023 del Consell; locales 22-01 y 08-04.
 # - 2025: Decreto 100/2024 del Consell; locales 22-01 y 28-04.
+# - 2026: Decreto 100/2025 del Consell (DOGV 10145, 07-07-2025). El 24-06 ya no es recuperable.
+#   Los locales 22-01 y 13-04 salen de prensa y calendarios de terceros, sin fuente oficial,
+#   pero caen antes de los datos de 2026 (desde el 29-06).
 # El 24 de junio (San Juan) es festivo «recuperable» en 2024 y 2025: no se trabaja, cuenta.
 FESTIVOS = pd.to_datetime([
     "2022-12-06", "2022-12-08",
@@ -30,9 +33,11 @@ FESTIVOS = pd.to_datetime([
     "2025-01-01", "2025-01-06", "2025-01-22", "2025-03-19", "2025-04-18", "2025-04-21", "2025-04-28",
     "2025-05-01", "2025-06-24", "2025-08-15", "2025-10-09", "2025-11-01", "2025-12-06", "2025-12-08",
     "2025-12-25",
+    "2026-01-01", "2026-01-06", "2026-01-22", "2026-03-19", "2026-04-03", "2026-04-06", "2026-04-13",
+    "2026-05-01", "2026-06-24", "2026-08-15", "2026-10-09", "2026-10-12", "2026-12-08", "2026-12-25",
 ])
 # Fuera de este rango la tabla no sabe qué días son festivos.
-COBERTURA = (pd.Timestamp("2022-12-01"), pd.Timestamp("2025-12-31"))
+COBERTURA = (pd.Timestamp("2022-12-01"), pd.Timestamp("2026-12-31"))
 
 
 def features_calendario(slot_utc: pd.Series) -> pd.DataFrame:

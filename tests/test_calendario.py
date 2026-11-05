@@ -34,4 +34,10 @@ def test_tabla_sin_repetidos_y_sin_el_26_de_diciembre_de_2022():
 
 def test_fuera_de_la_tabla_da_error():
     with pytest.raises(ValueError, match="festivos"):
-        features_calendario(slots("2026-01-05 10:00"))
+        features_calendario(slots("2027-01-05 10:00"))
+
+
+def test_festivos_de_2026_del_decreto_100_2025():
+    out = features_calendario(slots("2026-08-15 10:00", "2026-10-09 10:00", "2026-10-12 10:00", "2026-10-13 10:00",
+                                    "2026-11-01 10:00"))
+    assert out["festivo"].tolist() == [True, True, True, False, False]
