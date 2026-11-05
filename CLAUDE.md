@@ -321,7 +321,7 @@ El usuario quiere entender cada decisión: avanzar paso a paso y explicar el por
   - **Comparación con la v1**: LightGBM con las 15 features de `FEATURES_MODELO`, reentrenado con los mismos datos y **1510 árboles fijos** (los de A0).
   - El periodo, el resultado secundario y las estaciones nuevas son los fijados en «Prueba v2: decisiones fijadas antes de mirarla».
 
-- **Evaluación final v2: método fijado antes de ejecutar** (escrito el 2026-11-05, pendiente del visto bueno; `scripts/evaluacion_final_v2.py`, sin ejecutar; la prueba v2 no se ha leído nunca):
+- **Evaluación final v2: método fijado antes de ejecutar** (aprobado el 2026-11-05; `scripts/evaluacion_final_v2.py`, sin ejecutar; la prueba v2 no se ha leído nunca):
   - **Métricas**: AUC-PR, Brier skill, logloss (fue la métrica de decisión) y calibración por tramos y por mes. Intervalos al 95 % por bootstrap de días, con 200 réplicas y semilla 0, para cada modelo y para la diferencia de LightGBM v2 con cada uno.
   - **Modelos comparados**: LightGBM v2, LightGBM v1 de 15 features, persistencia, frecuencia, tabla por libres y constante (la constante, sin intervalo). Todos se ajustan con entrenamiento + validación v2, y la constante del Brier skill sale de esos datos.
   - **Grupos**: todas las filas, llena ahora / no, tramos de libres, con los 4 retardos / con algún `NaN`. Los mismos con el resultado principal y el secundario. Las estaciones nuevas, aparte, con métricas si tienen al menos 30 positivos.
